@@ -1,0 +1,22 @@
+[project]
+name = "test-sail"
+version = "0.1.0"
+description = "Proyecto de pruebas con pytest y PySail"
+requires-python = ">=3.9,<3.15"
+dependencies = [
+    "pysail>=0.4.6",
+    "pyspark[connect]>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+markers = [
+    "pysail: tests que usan PySail como backend",
+    "pyspark: tests que requieren PySpark con Java",
+    "unit: tests unitarios sin dependencias externas",
+]
