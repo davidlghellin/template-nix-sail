@@ -1,8 +1,9 @@
+"""Tests de dataframes con PySpark puro (requiere Java)."""
 import pytest
 
 from src.dataframes import suma_columnas
 
-pytestmark = pytest.mark.pysail
+pytestmark = pytest.mark.pyspark
 
 
 def test_suma_columnas_basico(spark):

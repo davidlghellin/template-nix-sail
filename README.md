@@ -34,18 +34,23 @@ pip install pytest pyspark "pyspark[connect]" pysail
 ## Ejecutar tests
 
 ```bash
-# Ejecutar todos los tests
-pytest
+# Tests unitarios + PySail (sin Java)
+pytest -m "not pyspark"
+
+# Solo tests de PySail
+pytest -m pysail
+
+# Solo tests de PySpark (requiere Java)
+pytest -m pyspark
+
+# Solo tests unitarios
+pytest -m unit
 
 # Con detalle
-pytest -v
-
-# Un archivo específico
-pytest tests/test_calculator.py
-
-# Un test específico
-pytest tests/test_calculator.py::test_suma_positivos
+pytest -m "not pyspark" -v
 ```
+
+> **Nota:** No se pueden mezclar tests de `pyspark` y `pysail` en la misma ejecución porque Spark no permite tener sesiones locales y remotas simultáneamente.
 
 ## Funciones disponibles
 
@@ -63,17 +68,29 @@ pytest tests/test_calculator.py::test_suma_positivos
 
 ## Fixtures disponibles
 
-Las fixtures usan PySail como backend (no requiere Java).
+### PySpark (requiere Java)
+
+| Fixture | Scope | Descripción |
+|---------|-------|-------------|
+| `spark` | session | Sesión de Spark local |
+
+```python
+@pytest.mark.pyspark
+def test_mi_funcion(spark):
+    df = spark.createDataFrame([(1, 2)], ["a", "b"])
+```
+
+### PySail (sin Java)
 
 | Fixture | Scope | Descripción |
 |---------|-------|-------------|
 | `sail_server` | session | Servidor Spark Connect con Sail |
-| `spark` | session | Sesión de Spark conectada a Sail |
+| `spark_sail` | session | Sesión conectada a Sail |
 
 ```python
-def test_mi_funcion(spark):
-    df = spark.createDataFrame([(1, 2)], ["a", "b"])
-    # ...
+@pytest.mark.pysail
+def test_mi_funcion(spark_sail):
+    df = spark_sail.createDataFrame([(1, 2)], ["a", "b"])
 ```
 
 ## Añadir nuevos tests

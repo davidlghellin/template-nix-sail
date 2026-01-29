@@ -1,11 +1,26 @@
 import pytest
-from pysail.spark import SparkConnectServer
 from pyspark.sql import SparkSession
 
 
+# === PySpark puro (requiere Java) ===
+@pytest.fixture(scope="session")
+def spark():
+    """Sesión de Spark local (requiere Java instalado)."""
+    spark = (
+        SparkSession.builder
+        .master("local[1]")
+        .appName("test-sail")
+        .getOrCreate()
+    )
+    yield spark
+    spark.stop()
+
+
+# === PySail (no requiere Java) ===
 @pytest.fixture(scope="session")
 def sail_server():
-    """Inicia el servidor de Spark Connect con Sail como backend."""
+    """Servidor de Spark Connect con Sail como backend."""
+    from pysail.spark import SparkConnectServer
     server = SparkConnectServer()
     server.start(background=True)
     yield server
@@ -13,8 +28,8 @@ def sail_server():
 
 
 @pytest.fixture(scope="session")
-def spark(sail_server):
-    """Crea una sesión de Spark conectada al servidor de Sail."""
+def spark_sail(sail_server):
+    """Sesión de Spark conectada al servidor de Sail."""
     ip, port = sail_server.listening_address
     spark = (
         SparkSession.builder
