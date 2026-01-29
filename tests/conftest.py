@@ -1,40 +1,46 @@
+import os
 import pytest
 from pyspark.sql import SparkSession
 
 
-# === PySpark puro (requiere Java) ===
-@pytest.fixture(scope="session")
-def spark():
-    """Sesión de Spark local (requiere Java instalado)."""
-    spark = (
-        SparkSession.builder
-        .master("local[1]")
-        .appName("test-sail")
-        .getOrCreate()
-    )
-    yield spark
-    spark.stop()
+def get_spark_backend():
+    """Determina qué backend usar según variable de entorno."""
+    return os.environ.get("SPARK_BACKEND", "pysail")
 
 
-# === PySail (no requiere Java) ===
-@pytest.fixture(scope="session")
-def sail_server():
-    """Servidor de Spark Connect con Sail como backend."""
-    from pysail.spark import SparkConnectServer
-    server = SparkConnectServer()
-    server.start(background=True)
-    yield server
-    server.stop()
+def pytest_report_header():
+    """Muestra el backend de Spark en el header de pytest."""
+    backend = get_spark_backend()
+    return f"spark backend: {backend}"
 
 
 @pytest.fixture(scope="session")
-def spark_sail(sail_server):
-    """Sesión de Spark conectada al servidor de Sail."""
-    ip, port = sail_server.listening_address
-    spark = (
-        SparkSession.builder
-        .remote(f"sc://{ip}:{port}")
-        .getOrCreate()
-    )
-    yield spark
-    spark.stop()
+def spark(request):
+    """Sesión de Spark. Usa SPARK_BACKEND=pyspark|pysail para elegir."""
+    backend = get_spark_backend()
+
+    if backend == "pyspark":
+        # PySpark puro (requiere Java)
+        spark = (
+            SparkSession.builder
+            .master("local[1]")
+            .appName("test-sail")
+            .getOrCreate()
+        )
+        yield spark
+        spark.stop()
+    else:
+        # PySail (sin Java)
+        from pysail.spark import SparkConnectServer
+        server = SparkConnectServer()
+        server.start(background=True)
+        ip, port = server.listening_address
+
+        spark = (
+            SparkSession.builder
+            .remote(f"sc://{ip}:{port}")
+            .getOrCreate()
+        )
+        yield spark
+        spark.stop()
+        server.stop()

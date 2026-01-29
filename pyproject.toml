@@ -15,8 +15,7 @@ dev = ["pytest>=8.0"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+addopts = "--durations=0"
 markers = [
-    "pysail: tests que usan PySail como backend",
-    "pyspark: tests que requieren PySpark con Java",
     "unit: tests unitarios sin dependencias externas",
 ]
