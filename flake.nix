@@ -19,9 +19,15 @@
             python
             pkgs.jdk17
             pkgs.fzf
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+            pkgs.stdenv.cc.cc.lib
+            pkgs.zlib
           ];
 
           shellHook = ''
+            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+              export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:$LD_LIBRARY_PATH"
+            ''}
             echo "⛵ dev-nix-sail - Development environment"
             echo ""
 
@@ -78,9 +84,18 @@
         devShells.pysail = pkgs.mkShell {
           name = "dev-nix-sail-pysail";
 
-          buildInputs = [ python pkgs.fzf ];
+          buildInputs = [
+            python
+            pkgs.fzf
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+            pkgs.stdenv.cc.cc.lib
+            pkgs.zlib
+          ];
 
           shellHook = ''
+            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+              export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:$LD_LIBRARY_PATH"
+            ''}
             echo "⛵ dev-nix-sail - PySail only (no Java)"
             echo ""
 
