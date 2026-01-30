@@ -6,9 +6,9 @@ build-backend = "setuptools.build_meta"
 packages = ["src"]
 
 [project]
-name = "test-sail"
+name = "dev-nix-sail"
 version = "0.1.0"
-description = "Testing project with pytest and PySail"
+description = "Nix template for PySpark/PySail projects"
 requires-python = ">=3.9,<3.15"
 dependencies = [
     "pysail>=0.4.6",
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-test-sail = "src.main:main"
+dev-nix-sail = "src.main:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.4", "build>=1.0"]

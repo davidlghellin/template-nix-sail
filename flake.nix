@@ -1,5 +1,5 @@
 {
-  description = "⛵ Test Sail - PySpark/PySail testing project";
+  description = "⛵ Template Nix Sail - PySpark/PySail testing project";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -9,20 +9,25 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;  # Required for redpanda-client (BSL license)
+        };
         python = pkgs.python312;
       in {
         devShells.default = pkgs.mkShell {
-          name = "test-sail";
+          name = "template-nix-sail";
 
           buildInputs = [
             python
             pkgs.jdk17
             pkgs.fzf
+            pkgs.gnumake
+            pkgs.redpanda-client  # rpk CLI for Redpanda/Kafka
           ];
 
           shellHook = ''
-            echo "⛵ Test Sail - Development environment"
+            echo "⛵ Template Nix Sail - Development environment"
             echo ""
 
             # Create local venv if not exists
@@ -37,7 +42,7 @@
             if ! python -c "import pysail" 2>/dev/null; then
               echo "Installing dependencies..."
               pip install --quiet --upgrade pip
-              pip install --quiet pysail "pyspark[connect]" pytest ptpython ruff build colorlog &
+              pip install --quiet pysail "pyspark[connect]" pytest ptpython ruff build colorlog kafka-python &
               PIP_PID=$!
 
               # Sailboat animation
@@ -54,26 +59,14 @@
             fi
 
             echo ""
-            echo "Available backends:"
-            echo "  - PySail:  SPARK_BACKEND=pysail pytest -v"
-            echo "  - PySpark: SPARK_BACKEND=pyspark pytest -v"
+            echo "Run 'make help' for all commands, or:"
             echo ""
-            echo "Sail server:"
-            echo "  sail spark server --port 50051"
+            echo "  make test           # Run tests with PySail"
+            echo "  make demo           # Interactive demo"
+            echo "  make lint / fix     # Check / auto-fix code"
             echo ""
-            echo "Interactive terminal:"
-            echo "  ptpython"
-            echo ""
-            echo "Demo:"
-            echo "  python src/main.py"
-            echo ""
-            echo "Linter:"
-            echo "  ruff check .        # Check errors"
-            echo "  ruff check --fix .  # Auto-fix"
-            echo "  ruff format .       # Format code"
-            echo ""
-            echo "Build:"
-            echo "  python -m build     # Generate wheel in dist/"
+            echo "Streaming (Redpanda):"
+            echo "  make redpanda-start / producer / consumer"
             echo ""
             echo "Python: $(python --version)"
             echo "Java:   $(java -version 2>&1 | head -1)"
@@ -95,12 +88,12 @@
         };
 
         devShells.pysail = pkgs.mkShell {
-          name = "test-sail-pysail";
+          name = "template-nix-sail-pysail";
 
           buildInputs = [ python pkgs.fzf ];
 
           shellHook = ''
-            echo "⛵ Test Sail - PySail only (no Java)"
+            echo "⛵ Template Nix Sail - PySail only (no Java)"
             echo ""
 
             if [ ! -d ".venv-nix" ]; then
