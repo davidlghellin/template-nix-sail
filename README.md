@@ -1,6 +1,6 @@
 # dev-nix-sail
 
-Nix template for PySpark/PySail projects with streaming support.
+Nix-configured development environment for Sail/PySpark.
 
 ## Structure
 
@@ -9,12 +9,7 @@ dev-nix-sail/
 ├── src/
 │   ├── calculator.py      # Math functions
 │   ├── dataframes.py      # DataFrame functions
-│   ├── main.py            # Interactive demo
-│   └── streaming/
-│       └── redpanda/            # Kafka-compatible (C++, BSL 1.1)
-│           ├── producer.py
-│           ├── consumer.py
-│           └── consumer_simple.py
+│   └── main.py            # Interactive demo
 ├── tests/
 │   ├── conftest.py        # Fixtures (spark)
 │   ├── test_calculator.py # Unit tests
@@ -24,7 +19,6 @@ dev-nix-sail/
 ├── .ptpython/
 │   └── config.py          # ptpython configuration
 ├── flake.nix              # Nix environment
-├── Makefile               # Common commands
 └── pyproject.toml         # Project configuration
 ```
 
@@ -41,7 +35,7 @@ nix develop
 ```bash
 python -m venv venv
 source venv/bin/activate
-pip install pysail "pyspark[connect]" pytest ptpython ruff colorlog kafka-python
+pip install pysail "pyspark[connect]" pytest ptpython ruff colorlog
 ```
 
 ## Usage
@@ -111,25 +105,6 @@ Features (via `.ptpython/config.py`):
 >>> spark = SparkSession.builder.remote("sc://localhost:50051").getOrCreate()
 >>> spark.sql("SELECT 1 + 1").show()
 ```
-
-## Streaming with Redpanda
-
-Redpanda is a Kafka-compatible streaming platform (C++, no JVM required).
-
-> **Note:** BSL 1.1 license (free for development and internal production use, not for offering as a managed service).
-
-```bash
-make redpanda-start      # Start (requires Docker)
-make redpanda-producer   # Terminal 1 - Send numbers
-make redpanda-consumer   # Terminal 2 - Sum with PySail
-make redpanda-stop       # Stop
-```
-
-### How it works
-
-1. **Producer** sends numbers as JSON to topic `numbers`
-2. **Consumer** reads continuously and calculates running sum with PySail
-3. Results update in real-time as you type numbers
 
 ## Linter
 
