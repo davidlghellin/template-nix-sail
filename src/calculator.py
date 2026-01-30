@@ -1,3 +1,3 @@
 def suma(a: int, b: int) -> int:
-    """Suma dos números."""
+    """Add two numbers."""
     return a + b

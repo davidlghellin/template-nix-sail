@@ -1,6 +1,7 @@
-# Entorno virtual
+# Virtual environments
 venv/
 .venv/
+.venv-nix/
 
 # Python
 __pycache__/
@@ -9,15 +10,28 @@ __pycache__/
 dist/
 build/
 
-# pytest
+# Testing
 .pytest_cache/
 .coverage
 htmlcov/
 
-# IDEs
+# Linter
+.ruff_cache/
+
+# IDE
 .idea/
 .vscode/
 *.swp
 
+# Nix
+result
+
 # Logs
 *.log
+
+# Environment
+.env
+.direnv/
+
+# ptpython
+.ptpython/history

@@ -1,15 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["src"]
+
 [project]
 name = "test-sail"
 version = "0.1.0"
-description = "Proyecto de pruebas con pytest y PySail"
+description = "Testing project with pytest and PySail"
 requires-python = ">=3.9,<3.15"
 dependencies = [
     "pysail>=0.4.6",
     "pyspark[connect]>=4.0",
 ]
 
+[project.scripts]
+test-sail = "src.main:main"
+
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.4", "build>=1.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -17,5 +27,14 @@ python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "--durations=0"
 markers = [
-    "unit: tests unitarios sin dependencias externas",
+    "unit: unit tests without external dependencies",
 ]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]

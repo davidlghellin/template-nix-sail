@@ -1,83 +1,156 @@
 # Test Sail
 
-Proyecto de Python para aprender y practicar testing con pytest.
+Python project for testing with PySpark and PySail.
 
-## Estructura
+## Structure
 
 ```
 test-sail/
 ├── src/
-│   ├── calculator.py      # Funciones matemáticas
-│   └── dataframes.py      # Funciones de DataFrames
+│   ├── calculator.py      # Math functions
+│   ├── dataframes.py      # DataFrame functions
+│   └── main.py            # Interactive demo
 ├── tests/
-│   ├── conftest.py        # Fixture spark (PySail/PySpark)
-│   ├── test_calculator.py # Tests unitarios
-│   └── test_dataframes.py # Tests de DataFrames
-├── pyproject.toml         # Configuración del proyecto
-└── venv/                  # Entorno virtual
+│   ├── conftest.py        # Fixtures (spark)
+│   ├── test_calculator.py # Unit tests
+│   └── test_dataframes.py # DataFrame tests
+├── resources/
+│   └── ciudades_espana.csv # 100 Spanish cities dataset
+├── .ptpython/
+│   └── config.py          # ptpython configuration
+├── flake.nix              # Nix environment
+└── pyproject.toml         # Project configuration
 ```
 
-## Instalación
+## Installation
+
+### With Nix (recommended)
 
 ```bash
-# Crear entorno virtual
-python3 -m venv venv
+nix develop
+```
 
-# Activar entorno virtual
+### With pip
+
+```bash
+python -m venv venv
 source venv/bin/activate
-
-# Instalar dependencias
-pip install pysail "pyspark[connect]" pytest
+pip install pysail "pyspark[connect]" pytest ptpython ruff colorlog
 ```
 
-## Ejecutar tests
+## Usage
+
+### Tests
 
 ```bash
-# Con PySail (por defecto, sin Java)
-pytest
-
-# Con PySpark (requiere Java)
-SPARK_BACKEND=pyspark pytest
-
-# Solo tests unitarios
-pytest -m unit
-
-# Con detalle
+# With PySail (default, no Java required)
 pytest -v
+
+# With PySpark (requires Java)
+SPARK_BACKEND=pyspark pytest -v
+
+# Unit tests only
+pytest -m unit -v
 ```
 
-## Funciones disponibles
+### Shell Aliases
 
-### Calculator (`src/calculator.py`)
+Available after `nix develop`:
 
-| Función | Descripción |
-|---------|-------------|
-| `suma(a, b)` | Suma dos números |
+| Alias | Command                         |
+| ----- | ------------------------------- |
+| `t`   | `pytest -v`                     |
+| `ts`  | `SPARK_BACKEND=pysail pytest -v`|
+| `tp`  | `SPARK_BACKEND=pyspark pytest -v`|
+| `r`   | `ruff check .`                  |
+| `rf`  | `ruff check --fix . && ruff format .` |
 
-### DataFrames (`src/dataframes.py`)
+### History Search
 
-| Función | Descripción |
-|---------|-------------|
-| `suma_columnas(df, col1, col2, nueva_col)` | Suma dos columnas y añade el resultado como nueva columna |
+Press `Ctrl+R` for fzf fuzzy history search in bash.
 
-## Fixture disponible
+### Demo
 
-| Fixture | Scope | Descripción |
-|---------|-------|-------------|
-| `spark` | session | Sesión de Spark (backend según `SPARK_BACKEND`) |
+```bash
+python src/main.py
+```
+
+Auto-detects external Sail server. If unavailable, starts an internal one.
+
+### Sail Server
+
+```bash
+# Start server
+sail spark server --port 50051
+
+# Connect from another terminal
+python src/main.py
+```
+
+### Interactive Terminal
+
+```bash
+ptpython
+```
+
+Features (via `.ptpython/config.py`):
+- Fuzzy completion (Tab)
+- Auto-suggest from history (accept with →)
+- History search (Ctrl+R)
+- Syntax highlighting
+- Monokai color scheme
 
 ```python
-def test_mi_funcion(spark):
+>>> from pyspark.sql import SparkSession
+>>> spark = SparkSession.builder.remote("sc://localhost:50051").getOrCreate()
+>>> spark.sql("SELECT 1 + 1").show()
+```
+
+## Linter
+
+```bash
+ruff check .        # Check errors
+ruff check --fix .  # Auto-fix
+ruff format .       # Format code
+```
+
+## Backends
+
+| Backend | Variable                | Java | Description              |
+| ------- | ----------------------- | ---- | ------------------------ |
+| PySail  | `SPARK_BACKEND=pysail`  | No   | Rust engine, fast        |
+| PySpark | `SPARK_BACKEND=pyspark` | Yes  | Traditional Spark w/ JVM |
+
+## Available Functions
+
+### `src/calculator.py`
+
+| Function     | Description      |
+| ------------ | ---------------- |
+| `suma(a, b)` | Adds two numbers |
+
+### `src/dataframes.py`
+
+| Function                                   | Description                        |
+| ------------------------------------------ | ---------------------------------- |
+| `suma_columnas(df, col1, col2, nueva_col)` | Sums two columns and adds result   |
+
+## Build
+
+```bash
+python -m build
+```
+
+Generates in `dist/`:
+- `test_sail-0.1.0-py3-none-any.whl` (wheel)
+- `test_sail-0.1.0.tar.gz` (sdist)
+
+## Fixture
+
+```python
+def test_my_function(spark):
     df = spark.createDataFrame([(1, 2)], ["a", "b"])
     # ...
 ```
 
-**Backends:**
-- `pysail` (por defecto): Sin Java, usa Sail como motor
-- `pyspark`: Requiere Java instalado
-
-## Añadir nuevos tests
-
-1. Crear función en `src/`
-2. Añadir tests en `tests/test_*.py`
-3. Ejecutar `pytest -v`
+Backend is selected via `SPARK_BACKEND` (pysail by default).
