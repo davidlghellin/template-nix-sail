@@ -5,6 +5,7 @@ updates:
     schedule:
       interval: "daily"
     open-pull-requests-limit: 5
+    versioning-strategy: increase
     labels:
       - "dependencies"
     commit-message:
