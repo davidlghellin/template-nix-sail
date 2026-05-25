@@ -1,4 +1,7 @@
 import os
+import sys
+import threading
+import time
 
 import pytest
 from pyspark.sql import SparkSession
@@ -30,9 +33,32 @@ def spark(request):
         from pysail.spark import SparkConnectServer
 
         server = SparkConnectServer()
-        server.start(background=True)
-        ip, port = server.listening_address
 
+        if sys.platform == "win32":
+            # Windows: usar threading en lugar de multiprocessing
+            server_thread = threading.Thread(
+                target=server.start,
+                kwargs={"background": False},
+                daemon=True,
+            )
+            server_thread.start()
+
+            # Esperar a que el servidor esté listo
+            for _ in range(30):
+                try:
+                    ip, port = server.listening_address
+                    if ip and port:
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            else:
+                raise RuntimeError("PySail server failed to start")
+        else:
+            # Linux/Mac: usar background=True normal
+            server.start(background=True)
+
+        ip, port = server.listening_address
         spark = SparkSession.builder.remote(f"sc://{ip}:{port}").getOrCreate()
         yield spark
         spark.stop()
