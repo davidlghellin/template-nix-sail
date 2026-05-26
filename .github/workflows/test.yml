@@ -19,6 +19,10 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+      - uses: actions/cache@v4
+        with:
+          path: .venv-nix
+          key: venv-${{ runner.os }}-${{ matrix.backend }}-${{ hashFiles('pyproject.toml') }}
       - run: nix develop --command pytest -v
         env:
           SPARK_BACKEND: ${{ matrix.backend }}
