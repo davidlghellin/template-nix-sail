@@ -19,7 +19,7 @@ dependencies = [
 dev-nix-sail = "src.main:main"
 
 [project.optional-dependencies]
-dev = ["pytest==9.0.3", "ruff==0.15.16", "build>=1.0"]
+dev = ["pytest==9.1.0", "ruff==0.15.16", "build>=1.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
