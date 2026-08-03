@@ -43,7 +43,7 @@
             if ! python -c "import pysail" 2>/dev/null; then
               echo "Installing dependencies..."
               pip install --quiet --upgrade pip
-              pip install --quiet pysail "pyspark[connect]" pytest ptpython ruff build colorlog &
+              pip install --quiet -e ".[dev]" ptpython colorlog &
               PIP_PID=$!
 
               # Sailboat animation
@@ -107,7 +107,7 @@
 
             if ! python -c "import pysail" 2>/dev/null; then
               pip install --quiet --upgrade pip
-              pip install --quiet pysail "pyspark[connect]" pytest ptpython
+              pip install --quiet -e ".[dev]" ptpython
             fi
 
             export SPARK_BACKEND=pysail
