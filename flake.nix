@@ -22,11 +22,11 @@
         # Native libraries the PySail wheel needs at runtime on Linux.
         linuxLibs = lib.optionals stdenv.isLinux [ stdenv.cc.cc.lib pkgs.zlib ];
 
+        # One entry per path: devshell runs `prefix` through realpath, which
+        # takes a single path, not a colon-separated list.
         linuxEnv = lib.optionals stdenv.isLinux [
-          {
-            name = "LD_LIBRARY_PATH";
-            prefix = "${stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib";
-          }
+          { name = "LD_LIBRARY_PATH"; prefix = "${pkgs.zlib}/lib"; }
+          { name = "LD_LIBRARY_PATH"; prefix = "${stdenv.cc.cc.lib}/lib"; }
         ];
 
         commonEnv = [
@@ -72,16 +72,20 @@
               pip install --quiet -e "$PRJ_ROOT[dev]" ${extras} &
               PIP_PID=$!
 
-              # Sailboat animation
-              WIDTH=40
-              while kill -0 $PIP_PID 2>/dev/null; do
-                for ((i=0; i<=WIDTH; i++)); do
-                  printf "\r%*s⛵%*s" $i "" $((WIDTH-i)) ""
-                  sleep 0.1
-                  if ! kill -0 $PIP_PID 2>/dev/null; then break; fi
+              # Sailboat animation, only where a terminal can redraw it: without
+              # a TTY the carriage returns pile up as hundreds of boats in the
+              # CI log.
+              if [ -t 1 ]; then
+                WIDTH=40
+                while kill -0 $PIP_PID 2>/dev/null; do
+                  for ((i=0; i<=WIDTH; i++)); do
+                    printf "\r%*s⛵%*s" $i "" $((WIDTH-i)) ""
+                    sleep 0.1
+                    if ! kill -0 $PIP_PID 2>/dev/null; then break; fi
+                  done
                 done
-              done
-              printf "\r%*s\r" $((WIDTH+2)) ""
+                printf "\r%*s\r" $((WIDTH+2)) ""
+              fi
 
               wait $PIP_PID && PIP_RC=0 || PIP_RC=$?
             '' else ''
