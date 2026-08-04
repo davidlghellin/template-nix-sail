@@ -123,6 +123,18 @@
           }
         ];
 
+        # Named csail/cspark rather than cs/cp: `cp` would shadow the real one
+        # in every shell, and a command named `pyspark` would shadow the
+        # launcher it calls.
+        consoleCommands = [
+          {
+            category = "console";
+            name = "csail";
+            help = "ptpython console against a Sail server started in the background";
+            command = ''python "$PRJ_ROOT/.dev/console.py" "$@"'';
+          }
+        ];
+
         lintCommands = [
           {
             category = "lint";
@@ -182,6 +194,13 @@
               help = "Run the test suite against PySpark (needs Java)";
               command = ''SPARK_BACKEND=pyspark pytest -v "$@"'';
             }
+          ] ++ consoleCommands ++ [
+            {
+              category = "console";
+              name = "cspark";
+              help = "Classic PySpark shell on the local JVM (needs Java)";
+              command = ''pyspark "$@"'';
+            }
           ] ++ lintCommands ++ envCommands "ptpython colorlog";
 
           devshell.startup.venv.text = venvStartup {
@@ -204,7 +223,7 @@
 
           env = commonEnv;
 
-          commands = testCommands ++ lintCommands ++ envCommands "ptpython";
+          commands = testCommands ++ consoleCommands ++ lintCommands ++ envCommands "ptpython";
 
           devshell.startup.venv.text = venvStartup {
             extras = "ptpython";
