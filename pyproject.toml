@@ -16,6 +16,9 @@ dependencies = [
     # Sail ships one Spark config per version and picks it from the client
     # version, so 3.5 and 4.0/4.1 work too; we track the newest supported.
     "pyspark[connect]==4.2.0",
+    # Transitive dependency of pyspark[connect], pinned because PySpark warns
+    # it does not fully support pandas >= 3 yet.
+    "pandas<3",
 ]
 
 [project.scripts]
