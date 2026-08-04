@@ -9,11 +9,14 @@ dev-nix-sail/
 ├── src/
 │   ├── calculator.py      # Math functions
 │   ├── dataframes.py      # DataFrame functions
+│   ├── caso_base.py       # Compatibility base case (schemas + ETL)
 │   └── main.py            # Interactive demo
 ├── tests/
 │   ├── conftest.py        # Fixtures (spark)
 │   ├── test_calculator.py # Unit tests
-│   └── test_dataframes.py # DataFrame tests
+│   ├── test_dataframes.py # DataFrame tests
+│   ├── test_caso_base.py  # Base case: expressions, join, schema
+│   └── test_caso_base_catalogo.py # Base case end to end: catalog + insertInto
 ├── resources/
 │   └── ciudades_espana.csv # 100 Spanish cities dataset
 ├── .ptpython/
@@ -121,6 +124,11 @@ ruff format .       # Format code
 | PySail  | `SPARK_BACKEND=pysail`  | No   | Rust engine, fast        |
 | PySpark | `SPARK_BACKEND=pyspark` | Yes  | Traditional Spark w/ JVM |
 
+The `pyspark` backend uses `JAVA_HOME` before `PATH`. If your shell exports one
+(SDKMAN, for instance) pointing to a JDK older than 17, Spark fails to start with
+`JAVA_GATEWAY_EXITED`; `unset JAVA_HOME` to fall back to the JDK 17 from the Nix
+shell.
+
 ## Available Functions
 
 ### `src/calculator.py`
@@ -134,6 +142,23 @@ ruff format .       # Format code
 | Function                                   | Description                        |
 | ------------------------------------------ | ---------------------------------- |
 | `suma_columnas(df, col1, col2, nueva_col)` | Sums two columns and adds result   |
+
+### `src/caso_base.py`
+
+Shape of a real ETL, used as the compatibility base case between backends: two
+source tables with an explicit `StructType`, a `CASE` + `DISTINCT` filter, a
+`LEFT JOIN` qualified by DataFrame (both tables repeat column names), a decimal
+aggregate, and a positional conform to the target schema for `insertInto`.
+
+| Function                          | Description                                       |
+| --------------------------------- | ------------------------------------------------- |
+| `filtrar_y_deduplicar(t2, corte)` | Filter by date/type + `CASE` normalization + `DISTINCT` |
+| `unir_y_agregar(t1, t2, audit)`   | `LEFT JOIN` + `coalesce` + `groupBy`/`sum`        |
+| `conformar(df, schema)`           | Orders and casts to the target schema             |
+| `etl(t1, t2, corte, audit)`       | Full pipeline, from the sources to `TABLE_OUT`    |
+
+The expected values are Spark's: they were captured with `SPARK_BACKEND=pyspark`
+and the output (schema + rows) was compared against PySail.
 
 ## Build
 
