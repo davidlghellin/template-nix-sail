@@ -18,6 +18,10 @@ htmlcov/
 # Linter
 .ruff_cache/
 
+# Spark local metastore (lo crean los tests de catalogo)
+spark-warehouse/
+metastore_db/
+
 # IDE
 .idea/
 .vscode/
@@ -35,3 +39,6 @@ result
 
 # ptpython
 .ptpython/history
+
+# Agent
+.claude/settings.json
