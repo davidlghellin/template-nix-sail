@@ -11,10 +11,11 @@ version = "0.1.0"
 description = "Nix template for PySpark/PySail projects"
 requires-python = ">=3.10,<3.15"
 dependencies = [
-    "pysail==0.6.6",
-    # Pin the exact PySpark version supported by the pinned PySail release
-    # (Sail ships a Spark config generated for one Spark version).
-    "pyspark[connect]==4.1.1",
+    "pysail==0.7.0",
+    # Pin the exact PySpark version, as the Sail docs recommend. Since 0.7.0
+    # Sail ships one Spark config per version and picks it from the client
+    # version, so 3.5 and 4.0/4.1 work too; we track the newest supported.
+    "pyspark[connect]==4.2.0",
 ]
 
 [project.scripts]
