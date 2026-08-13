@@ -22,6 +22,9 @@ htmlcov/
 spark-warehouse/
 metastore_db/
 
+# Salidas de los jobs de la ETL (rutas declaradas en sus datasets)
+data/
+
 # IDE
 .idea/
 .vscode/

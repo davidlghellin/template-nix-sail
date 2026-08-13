@@ -26,3 +26,21 @@ jobs:
       - run: nix develop --command pytest -v
         env:
           SPARK_BACKEND: ${{ matrix.backend }}
+
+  # Lint y tipos no dependen del backend: una sola pasada, sin matriz.
+  checks:
+    runs-on: ubuntu-latest
+    name: lint + typecheck
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: actions/cache@v4
+        with:
+          path: .venv-nix
+          key: venv-${{ runner.os }}-checks-${{ hashFiles('pyproject.toml') }}
+      - run: nix develop --command ruff check .
+      - run: nix develop --command ruff format --check .
+      - run: nix develop --command mypy etl_kedro tests
