@@ -2,7 +2,12 @@
 
 import pytest
 
-from etl_kedro.core.session import BackendError, check_java_available, resolve_backend
+from etl_kedro.core.session import (
+    BackendError,
+    check_java_available,
+    resolve_backend,
+    spark_session,
+)
 
 
 @pytest.mark.parametrize("backend", ["pysail", "pyspark"])
@@ -61,3 +66,67 @@ def test_check_java_available_java_home_que_no_existe(monkeypatch, tmp_path):
 
     with pytest.raises(BackendError, match="necesita Java"):
         check_java_available()
+
+
+# --- el servidor de Sail se para pase lo que pase ---
+
+
+class ServidorFalso:
+    """Sustituto de `SparkConnectServer` que anota si lo han parado."""
+
+    def __init__(self) -> None:
+        self.parado = False
+
+    listening_address = ("127.0.0.1", 15002)
+
+    def start(self, background: bool = False) -> None:
+        pass
+
+    def stop(self) -> None:
+        self.parado = True
+
+
+def _falsear_pysail(monkeypatch, servidor, sesion):
+    monkeypatch.setenv("SPARK_BACKEND", "pysail")
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "pysail.spark",
+        type("modulo", (), {"SparkConnectServer": lambda: servidor}),
+    )
+    constructor = type(
+        "builder", (), {"remote": lambda self, url: self, "getOrCreate": lambda self: sesion}
+    )()
+    monkeypatch.setattr(
+        "etl_kedro.core.session.SparkSession", type("SparkSession", (), {"builder": constructor})
+    )
+
+
+def test_pysail_para_el_servidor_al_terminar(monkeypatch):
+    servidor = ServidorFalso()
+    _falsear_pysail(monkeypatch, servidor, type("sesion", (), {"stop": lambda self: None})())
+
+    with spark_session():
+        pass
+
+    assert servidor.parado
+
+
+def test_pysail_para_el_servidor_aunque_falle_el_stop_de_spark(monkeypatch):
+    """Si `spark.stop()` lanza, el servidor tiene que pararse igual.
+
+    Con un solo `finally` para las dos llamadas, la excepcion de la primera se
+    llevaba por delante la segunda y dejaba un Spark Connect escuchando en su
+    puerto, con el proceso sin terminar.
+    """
+    servidor = ServidorFalso()
+
+    def stop_que_falla(self):
+        raise RuntimeError("el stop de spark ha fallado")
+
+    _falsear_pysail(monkeypatch, servidor, type("sesion", (), {"stop": stop_que_falla})())
+
+    with pytest.raises(RuntimeError, match="el stop de spark"):
+        with spark_session():
+            pass
+
+    assert servidor.parado

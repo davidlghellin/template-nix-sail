@@ -43,22 +43,27 @@ def run(
     pipeline = ETLPipeline(spark, name=NOMBRE)
 
     logger.info("== read == %s", origen)
-    pipeline.read_csv(origen)
+    pipeline.read_dataset(CIUDADES_RAW, config, path=input_path)
 
     logger.info("== validate == clave %r", key_col)
     pipeline.transform(lambda df: transform.validar(df, key_col), name="validar")
 
     logger.info("== dedup == por %r", key_col)
-    rows_before = pipeline.count()
+    # Cada `count()` es una accion de Spark que recorre el fichero entero. Solo
+    # se pagan si el log va a salir: con --log-level WARNING no se emite la
+    # linea, asi que contar seria trabajo tirado.
+    contar = logger.isEnabledFor(logging.INFO)
+    rows_before = pipeline.count() if contar else 0
     pipeline.transform(lambda df: transform.deduplicar(df, key_col), name="deduplicar")
-    rows_after = pipeline.count()
-    logger.info(
-        "Deduplicado: %d filas -> %d filas (%d duplicados eliminados)",
-        rows_before,
-        rows_after,
-        rows_before - rows_after,
-    )
+    if contar:
+        rows_after = pipeline.count()
+        logger.info(
+            "Deduplicado: %d filas -> %d filas (%d duplicados eliminados)",
+            rows_before,
+            rows_after,
+            rows_before - rows_after,
+        )
 
     logger.info("== write == %s (mode=%s)", destino, mode)
-    pipeline.write_csv(destino, mode=mode)
+    pipeline.write_dataset(CIUDADES_DEDUP, config, path=output_path, mode=mode)
     return pipeline

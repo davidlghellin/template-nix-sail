@@ -12,8 +12,12 @@ import os
 import pytest
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
+from pyspark.sql.types import LongType, StringType, StructField, StructType
 
+from etl_kedro.core.config import Config
+from etl_kedro.core.datasets import Dataset
 from etl_kedro.core.pipeline import ETLPipeline, PipelineStateError
+from etl_kedro.core.quality import QualityCheckError
 
 FILAS = [
     ("1", "madrid", "3200000"),
@@ -188,3 +192,88 @@ def test_pipeline_end_to_end_encadenado(pipeline, csv_entrada, tmp_path):
     filas = leer_csv_escrito(salida)
     assert len(filas) == 2
     assert all(fila["pais"] == "ES" for fila in filas)
+
+
+# --- read_dataset: leer respetando lo que el dataset declara ---
+
+
+ESQUEMA_CIUDADES = StructType(
+    [
+        StructField("id", LongType(), True),
+        StructField("ciudad", StringType(), True),
+        StructField("poblacion", LongType(), True),
+    ]
+)
+
+
+def test_read_dataset_aplica_el_esquema_declarado(pipeline, csv_entrada):
+    """Sin inferSchema: los tipos son los declarados, iguales en los dos backends.
+
+    Con `inferSchema` PySpark deduce `int` donde Sail deduce `bigint`, asi que
+    el mismo codigo daba esquemas distintos segun el motor.
+    """
+    dataset = Dataset(nombre="ciudades", ruta=csv_entrada, esquema=ESQUEMA_CIUDADES)
+
+    pipeline.read_dataset(dataset)
+
+    assert pipeline.df.schema == ESQUEMA_CIUDADES
+    assert pipeline.count() == 3
+
+
+def test_read_dataset_sin_esquema_infiere(pipeline, csv_entrada):
+    dataset = Dataset(nombre="ciudades", ruta=csv_entrada, esquema=None)
+
+    pipeline.read_dataset(dataset)
+
+    assert pipeline.df.columns == CABECERA
+
+
+def test_read_dataset_comprueba_la_ruta_antes_de_leer(pipeline, tmp_path):
+    dataset = Dataset(nombre="ciudades", ruta=str(tmp_path / "no-existe.csv"))
+
+    with pytest.raises(FileNotFoundError, match="No existe la ruta de entrada"):
+        pipeline.read_dataset(dataset)
+
+
+def test_read_dataset_falla_si_falta_una_columna(pipeline, tmp_path):
+    path = tmp_path / "parcial.csv"
+    path.write_text("id,ciudad\n1,madrid\n", encoding="utf-8")
+    dataset = Dataset(nombre="ciudades", ruta=str(path), esquema=ESQUEMA_CIUDADES)
+
+    # Fallo de dato (codigo 2), no error de parseo del motor (codigo 1).
+    with pytest.raises(QualityCheckError, match="poblacion"):
+        pipeline.read_dataset(dataset)
+
+
+def test_read_dataset_falla_si_las_columnas_estan_cambiadas(pipeline, tmp_path):
+    """El caso que Sail no detecta: mismas columnas, otro orden.
+
+    Un esquema explicito se aplica por posicion. PySpark corta con
+    `enforceSchema=False`, pero Sail ignora esa opcion y devolveria `ciudad` y
+    `poblacion` intercambiadas sin un solo error.
+    """
+    path = tmp_path / "cambiado.csv"
+    path.write_text("id,poblacion,ciudad\n1,3200000,madrid\n", encoding="utf-8")
+    dataset = Dataset(nombre="ciudades", ruta=str(path), esquema=ESQUEMA_CIUDADES)
+
+    with pytest.raises(QualityCheckError, match="otro orden"):
+        pipeline.read_dataset(dataset)
+
+
+def test_read_dataset_acepta_sobrescribir_la_ruta(pipeline, csv_entrada, tmp_path):
+    # La CLI pasa --input: se usa esa ruta, pero sigue valiendo el esquema.
+    dataset = Dataset(nombre="ciudades", ruta=str(tmp_path / "otra.csv"), esquema=ESQUEMA_CIUDADES)
+
+    pipeline.read_dataset(dataset, path=csv_entrada)
+
+    assert pipeline.df.schema == ESQUEMA_CIUDADES
+
+
+def test_read_dataset_resuelve_la_ruta_con_la_config(pipeline, csv_entrada):
+    # Ruta relativa + raiz del entorno: se lee de la raiz, no del cwd.
+    carpeta, fichero = os.path.split(csv_entrada)
+    dataset = Dataset(nombre="ciudades", ruta=fichero, esquema=ESQUEMA_CIUDADES)
+
+    pipeline.read_dataset(dataset, Config(entorno="pro", raiz=carpeta))
+
+    assert pipeline.count() == 3

@@ -21,14 +21,16 @@ def leer_csv_escrito(directorio) -> list[dict[str, str]]:
 
 
 @pytest.fixture
-def csv_con_duplicados(tmp_path):
+def csv_con_duplicados(escribir_ciudades):
     """CSV con la clave `madrid` repetida: 4 filas, 3 claves distintas."""
-    path = tmp_path / "ciudades.csv"
-    path.write_text(
-        "ciudad,habitantes\nmadrid,3200000\nmadrid,999\nbarcelona,1600000\nvalencia,800000\n",
-        encoding="utf-8",
+    return escribir_ciudades(
+        [
+            ("madrid", 3200000, "Madrid", "Comunidad de Madrid", 604.3),
+            ("madrid", 999, "Madrid", "Comunidad de Madrid", 604.3),
+            ("barcelona", 1600000, "Barcelona", "Cataluna", 101.4),
+            ("valencia", 800000, "Valencia", "Comunidad Valenciana", 134.6),
+        ]
     )
-    return str(path)
 
 
 # --- la cadena declarada ---

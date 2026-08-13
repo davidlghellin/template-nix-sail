@@ -39,11 +39,13 @@ def run(
     pipeline = ETLPipeline(spark, name=NOMBRE)
 
     logger.info("== read == %s", origen)
-    pipeline.read_csv(origen)
+    # Lanzado suelto, este job depende de que `ciudades` ya haya escrito su
+    # salida. `read_dataset` comprueba la ruta y lo dice claro si no esta.
+    pipeline.read_dataset(CIUDADES_DEDUP, config, path=input_path)
 
     logger.info("== aggregate == por %r", key_col)
     pipeline.transform(lambda df: transform.agregar_por_ccaa(df, key_col), name="agregar_por_ccaa")
 
     logger.info("== write == %s (mode=%s)", destino, mode)
-    pipeline.write_csv(destino, mode=mode)
+    pipeline.write_dataset(POBLACION_POR_CCAA, config, path=output_path, mode=mode)
     return pipeline

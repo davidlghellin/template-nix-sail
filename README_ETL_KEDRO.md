@@ -297,6 +297,31 @@ from etl_kedro.core.quality import check_non_null_key, deduplicate_by_key
 Los metodos devuelven el pipeline para poder encadenar. Pedir `df`, `transform`
 o `write_csv` antes de un `read_csv` lanza `PipelineStateError`.
 
+### Leer y escribir por catalogo
+
+Dentro de un job no se usa `read_csv` a pelo, sino `read_dataset` / `write_dataset`,
+que hacen valer lo que el dataset declara:
+
+```python
+pipeline.read_dataset(CIUDADES_RAW, config)
+pipeline.write_dataset(CIUDADES_DEDUP, config, mode="overwrite")
+```
+
+Al leer: **comprueba la ruta** antes de tocar el motor, **aplica el `StructType`
+declarado** en vez de inferirlo, y **contrasta la cabecera** con el esquema. Si
+falta una columna o estan en otro orden corta con `QualityCheckError` (codigo 2)
+diciendo cual, en vez de dejar que salte un error de parseo del motor, que
+saldria como bug (codigo 1).
+
+Lo del orden no es teorico: un esquema explicito se aplica **por posicion**. Con
+`enforceSchema=False` PySpark contrasta la cabecera y corta, pero **Sail ignora
+esa opcion** y devolveria las columnas cruzadas sin un solo error. Por eso la
+comprobacion se hace aqui, y no se delega en el motor.
+
+Al escribir manda el `formato` del dataset. `ETL_OUTPUT_FORMAT` lo sobrescribe
+para toda la cadena, que es como el test e2e obtiene parquet de unos jobs que
+normalmente escriben CSV.
+
 ### Checks de calidad
 
 Todas las funciones de `etl_kedro.core.quality` reciben y devuelven un `DataFrame`, asi que
@@ -333,6 +358,20 @@ SPARK_BACKEND=pyspark pytest -v
 Los de `test_graph.py` no levantan Spark: leen lo que declara cada job, asi que
 corren en centesimas y sirven de verificacion barata de la cadena.
 
+### El test e2e
+
+`tests/etl_kedro/test_e2e.py` corre la cadena entera y comprueba el **contrato**:
+que lo escrito en disco tiene exactamente el `StructType` que declara su dataset,
+despues de pasar por lectura, transformaciones y escritura reales.
+
+Escribe en parquet a proposito. Un CSV convierte todo a texto, asi que un
+`bigint` y un `int` salen identicos y el test daria verde sin comprobar nada de
+tipos; parquet guarda el esquema junto a los datos.
+
+Al comprobar contra lo **declarado** y no contra otro motor, basta con un backend
+por ejecucion: si los dos cumplen el contrato, coinciden entre si. Por eso corre
+igual en la matriz de CI, y en Sail tarda decimas.
+
 ## Calidad de codigo
 
 Dentro del shell de Nix las herramientas ya estan en el `PATH`:
@@ -354,13 +393,22 @@ hatch run lint
 hatch run test-cov
 ```
 
-## Nota sobre `inferSchema`
+## Por que se declara el esquema y no se infiere
 
-Sail y PySpark no infieren los enteros igual: para un CSV con valores pequenos,
-PySpark devuelve `int` y Sail `bigint` (el resto de tipos —`double`, `string`,
-`date`— coinciden). Si el esquema importa (por ejemplo para un `insertInto`),
-pasa un `StructType` explicito en vez de confiar en `inferSchema`:
+Leyendo `resources/ciudades_espana.csv` de las dos maneras, con cada motor:
 
-```python
-pipeline.read_csv("entrada.csv", schema=MI_ESQUEMA, inferSchema=False)
-```
+| `habitantes`   | Sail     | PySpark |
+| -------------- | -------- | ------- |
+| **inferido**   | `bigint` | `int`   |
+| **declarado**  | `bigint` | `bigint`|
+
+Inferir no da un tipo *incorrecto*, da uno **no determinista**: depende del motor
+y de los valores que traiga el fichero ese dia, asi que un CSV cuyos numeros
+crezcan puede cambiarte el tipo sin que cambie una linea de codigo. Ademas hace
+doble pasada sobre el fichero, una para deducir y otra para leer.
+
+Con el `StructType` declarado en el dataset, los dos motores devuelven lo
+declarado y el tipo es parte del contrato, no del azar. Es lo que hace
+`read_dataset`, y lo que verifica el test e2e de punta a punta.
+
+El resto de tipos (`double`, `string`, `date`) coinciden entre motores.

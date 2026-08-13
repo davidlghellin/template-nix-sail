@@ -3,7 +3,6 @@
 import csv
 import glob
 import os
-from contextlib import contextmanager
 from dataclasses import replace
 
 import pytest
@@ -31,30 +30,14 @@ def leer_csv_escrito(directorio) -> list[dict[str, str]]:
 
 
 @pytest.fixture
-def cli(spark, monkeypatch):
-    """Hace que `main()` use la sesion de la suite y no la pare al terminar.
-
-    Sin esto, en PySpark `getOrCreate` devuelve la sesion compartida y el
-    `spark.stop()` del context manager destruye su contexto: cada test que
-    llama a `main()` obliga a reconstruir la JVM para el siguiente. Pasaba en
-    verde solo porque `getOrCreate` la resucita, y costaba ~1 s por test.
-    """
-
-    @contextmanager
-    def sesion_de_test(app_name: str = "test"):
-        yield spark
-
-    monkeypatch.setattr("etl_kedro.main.spark_session", sesion_de_test)
-
-
-@pytest.fixture
-def csv_con_duplicados(tmp_path):
-    path = tmp_path / "ciudades.csv"
-    path.write_text(
-        "ciudad,habitantes\nmadrid,3200000\nmadrid,999\nbarcelona,1600000\n",
-        encoding="utf-8",
+def csv_con_duplicados(escribir_ciudades):
+    return escribir_ciudades(
+        [
+            ("madrid", 3200000, "Madrid", "Comunidad de Madrid", 604.3),
+            ("madrid", 999, "Madrid", "Comunidad de Madrid", 604.3),
+            ("barcelona", 1600000, "Barcelona", "Cataluna", 101.4),
+        ]
     )
-    return str(path)
 
 
 # --- parse_args ---
@@ -145,7 +128,7 @@ def test_main_happy_path_devuelve_exit_ok(cli, csv_con_duplicados, tmp_path):
     assert len(leer_csv_escrito(salida)) == 2
 
 
-def test_main_lanza_la_cadena_entera(cli, monkeypatch, tmp_path):
+def test_main_lanza_la_cadena_entera(cli, monkeypatch, tmp_path, escribir_ciudades):
     """`--all` encadena los jobs: el segundo lee lo que escribio el primero.
 
     Los datasets se reapuntan a `tmp_path` con rutas absolutas en vez de hacer
@@ -153,13 +136,12 @@ def test_main_lanza_la_cadena_entera(cli, monkeypatch, tmp_path):
     JVM, que se fija al arrancarla, asi que un `chdir` posterior no le afecta
     (Sail, en proceso, si lo respeta). Con rutas absolutas da igual el motor.
     """
-    entrada = tmp_path / "ciudades.csv"
-    entrada.write_text(
-        "ciudad,habitantes,comunidad_autonoma\n"
-        "madrid,3000000,Comunidad de Madrid\n"
-        "alcobendas,100000,Comunidad de Madrid\n"
-        "barcelona,1600000,Cataluna\n",
-        encoding="utf-8",
+    entrada = escribir_ciudades(
+        [
+            ("madrid", 3000000, "Madrid", "Comunidad de Madrid", 604.3),
+            ("alcobendas", 100000, "Madrid", "Comunidad de Madrid", 45.0),
+            ("barcelona", 1600000, "Barcelona", "Cataluna", 101.4),
+        ]
     )
     dedup = tmp_path / "dedup"
     final = tmp_path / "por_ccaa"
@@ -179,15 +161,13 @@ def test_main_lanza_la_cadena_entera(cli, monkeypatch, tmp_path):
     assert agregado == {"Comunidad de Madrid": 3100000, "Cataluna": 1600000}
 
 
-def test_main_puede_lanzar_un_job_concreto(cli, tmp_path):
-    entrada = tmp_path / "dedup.csv"
-    entrada.write_text(
-        "ciudad,habitantes,comunidad_autonoma\nmadrid,3000000,Comunidad de Madrid\n",
-        encoding="utf-8",
+def test_main_puede_lanzar_un_job_concreto(cli, tmp_path, escribir_ciudades):
+    entrada = escribir_ciudades(
+        [("madrid", 3000000, "Madrid", "Comunidad de Madrid", 604.3)], nombre="dedup.csv"
     )
     salida = str(tmp_path / "salida")
 
-    codigo = main(["--job", "por_ccaa", "--input", str(entrada), "--output", salida])
+    codigo = main(["--job", "por_ccaa", "--input", entrada, "--output", salida])
 
     assert codigo == EXIT_OK
     assert leer_csv_escrito(salida) == [

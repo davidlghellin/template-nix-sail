@@ -83,9 +83,14 @@ def spark_session(app_name: str = APP_NAME) -> Iterator[SparkSession]:
     server = SparkConnectServer()
     server.start(background=True)
     ip, port = server.listening_address
-    spark = SparkSession.builder.remote(f"sc://{ip}:{port}").getOrCreate()
+    # `server.stop()` va en su propio finally: si `spark.stop()` lanza, el
+    # servidor tiene que pararse igual. Si no, queda un Spark Connect vivo
+    # escuchando en un puerto y el proceso no termina.
     try:
-        yield spark
+        spark = SparkSession.builder.remote(f"sc://{ip}:{port}").getOrCreate()
+        try:
+            yield spark
+        finally:
+            spark.stop()
     finally:
-        spark.stop()
         server.stop()

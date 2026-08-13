@@ -6,7 +6,7 @@ import pytest
 from pyspark.sql.types import StringType, StructField, StructType
 
 from etl_kedro.core.config import Config
-from etl_kedro.core.datasets import Dataset
+from etl_kedro.core.datasets import Dataset, problema_de_cabecera
 from etl_kedro.dryrun import render_plan, revisar, revisar_entradas, revisar_esquemas
 from etl_kedro.graph import Grafo, Job, discover_jobs
 
@@ -189,3 +189,33 @@ def test_dataset_resolver_usa_la_config():
 
     assert dataset.resolver(Config(entorno="pro", raiz="/lago")) == "/lago/data/x"
     assert replace(dataset, ruta="/fijo/x").resolver(Config(raiz="/lago")) == "/fijo/x"
+
+
+def test_detecta_las_columnas_cambiadas_de_orden(tmp_path):
+    """Mismas columnas, otro orden: Sail no lo detecta, el dry-run si.
+
+    Un esquema explicito se aplica por posicion, asi que el fichero se leeria
+    con `ciudad` y `habitantes` cruzadas.
+    """
+    path = tmp_path / "entrada.csv"
+    path.write_text("habitantes,ciudad\n3200000,madrid\n", encoding="utf-8")
+    entrada = Dataset("entrada", str(path), ESQUEMA)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
+
+    problemas = revisar_entradas(grafo, Config())
+
+    assert len(problemas) == 1
+    assert "otro orden" in problemas[0].mensaje
+
+
+def test_el_dryrun_y_la_lectura_usan_la_misma_comprobacion(tmp_path):
+    # Lo que el dry-run da por bueno no puede fallar al leer, ni al reves.
+    path = tmp_path / "entrada.csv"
+    path.write_text("habitantes,ciudad\n3200000,madrid\n", encoding="utf-8")
+    entrada = Dataset("entrada", str(path), ESQUEMA)
+
+    del_dryrun = revisar_entradas(Grafo(jobs={"a": job_falso("a", consume=(entrada,))}), Config())
+    del_lector = problema_de_cabecera(ESQUEMA, ["habitantes", "ciudad"])
+
+    assert del_lector is not None
+    assert del_dryrun[0].mensaje == del_lector

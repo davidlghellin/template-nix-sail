@@ -9,6 +9,7 @@ import argparse
 import logging
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 
 from pyspark.sql import SparkSession
 
@@ -125,6 +126,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             grafo = Grafo(jobs={args.job: load_job(args.job)})
             a_ejecutar = [args.job]
+
+        if config.formato_salida:
+            # El formato forzado solo alcanza a lo que produce la cadena: las
+            # entradas externas las escribio otro. Quien produce que sale del
+            # grafo completo, aunque solo se ejecute un job.
+            config = replace(config, datasets_forzados=frozenset(discover_jobs().productor_de))
 
         if args.dry_run:
             problemas = revisar(grafo, config)

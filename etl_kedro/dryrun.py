@@ -11,12 +11,11 @@ La cabecera de un CSV se lee con Python, sin motor: es instantaneo y caza el
 fallo mas comun, que el fichero de origen haya cambiado de columnas.
 """
 
-import csv
 from dataclasses import dataclass
 from pathlib import Path
 
 from etl_kedro.core.config import Config
-from etl_kedro.core.datasets import Dataset
+from etl_kedro.core.datasets import Dataset, cabecera_csv, problema_de_cabecera
 from etl_kedro.graph import CicloEnElGrafoError, Grafo
 
 
@@ -86,29 +85,20 @@ def revisar_entradas(grafo: Grafo, config: Config) -> list[Problema]:
 
 
 def _revisar_cabecera(nombre: str, dataset: Dataset, ruta: str) -> list[Problema]:
-    """Compara la cabecera del CSV con las columnas del esquema declarado."""
+    """Compara la cabecera del CSV con las columnas del esquema declarado.
+
+    Es la misma comprobacion que hace `ETLPipeline.read_dataset` al leer: aqui
+    se lista como problema del plan y alli corta la ejecucion. Una sola
+    implementacion, para que el dry-run no pueda dar por bueno lo que luego
+    falla al ejecutar.
+    """
     if dataset.esquema is None or dataset.formato != "csv":
         return []
-    fichero = Path(ruta)
-    if fichero.is_dir():  # salida de Spark: varios part-*.csv
-        partes = sorted(fichero.glob("*.csv"))
-        if not partes:
-            return [Problema(nombre, f"no hay ficheros csv en {ruta}")]
-        fichero = partes[0]
-
-    with fichero.open(newline="", encoding="utf-8") as handle:
-        cabecera = next(csv.reader(handle), [])
-
-    declaradas = dataset.esquema.fieldNames()
-    faltan = [col for col in declaradas if col not in cabecera]
-    if faltan:
-        return [
-            Problema(
-                nombre,
-                f"al fichero le faltan columnas declaradas {faltan}; tiene {cabecera}",
-            )
-        ]
-    return []
+    cabecera = cabecera_csv(ruta)
+    if cabecera is None:
+        return []
+    problema = problema_de_cabecera(dataset.esquema, cabecera)
+    return [Problema(nombre, problema)] if problema else []
 
 
 def revisar(grafo: Grafo, config: Config) -> list[Problema]:

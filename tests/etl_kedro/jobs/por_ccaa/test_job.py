@@ -21,17 +21,15 @@ def leer_csv_escrito(directorio) -> list[dict[str, str]]:
 
 
 @pytest.fixture
-def csv_ciudades(tmp_path):
+def csv_ciudades(escribir_ciudades):
     """Dos ciudades de Madrid y una de Cataluna, para ver el agregado."""
-    path = tmp_path / "ciudades.csv"
-    path.write_text(
-        "ciudad,habitantes,comunidad_autonoma\n"
-        "madrid,3000000,Comunidad de Madrid\n"
-        "alcobendas,100000,Comunidad de Madrid\n"
-        "barcelona,1600000,Cataluna\n",
-        encoding="utf-8",
+    return escribir_ciudades(
+        [
+            ("madrid", 3000000, "Madrid", "Comunidad de Madrid", 604.3),
+            ("alcobendas", 100000, "Madrid", "Comunidad de Madrid", 45.0),
+            ("barcelona", 1600000, "Barcelona", "Cataluna", 101.4),
+        ]
     )
-    return str(path)
 
 
 def test_declara_que_consume_la_salida_de_ciudades():
@@ -55,6 +53,12 @@ def test_deja_una_fila_por_comunidad(spark, csv_ciudades, tmp_path):
 
 
 def test_falla_si_falta_la_columna_de_habitantes(spark, tmp_path):
+    """Un fichero que no cumple el esquema declarado corta como fallo de dato.
+
+    El corte ocurre al leer, comparando la cabecera con el esquema, y no al
+    aplicar el check de calidad: asi el mensaje dice que columna falta en vez
+    de dejar que el motor lance un error de parseo, que saldria como bug.
+    """
     entrada = tmp_path / "sin_habitantes.csv"
     entrada.write_text("ciudad,comunidad_autonoma\nmadrid,Comunidad de Madrid\n", encoding="utf-8")
 

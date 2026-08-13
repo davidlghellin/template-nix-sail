@@ -13,6 +13,7 @@ Ese import es el enlace: el IDE lo navega, mypy lo verifica y "buscar usos" te
 da los consumidores de un dataset al instante, tengas 3 jobs o 300.
 """
 
+import csv
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,3 +67,49 @@ def check_input_exists(path: str) -> None:
         return
     if not Path(path).exists():
         raise FileNotFoundError(f"No existe la ruta de entrada: {path}")
+
+
+def cabecera_csv(ruta: str) -> list[str] | None:
+    """Columnas de la cabecera de un CSV, leidas con Python y sin motor.
+
+    Devuelve `None` cuando no se puede mirar en seco: un URI, un patron con
+    comodines, una ruta que no existe o un directorio sin ningun `.csv`. En
+    esos casos la comprobacion se delega al motor al leer.
+
+    Una salida de Spark es un directorio de `part-*.csv`, todos con la misma
+    cabecera: basta con el primero.
+    """
+    if URI_SEPARATOR in ruta or any(char in ruta for char in GLOB_CHARS):
+        return None
+    fichero = Path(ruta)
+    if fichero.is_dir():
+        partes = sorted(fichero.glob("*.csv"))
+        if not partes:
+            return None
+        fichero = partes[0]
+    if not fichero.is_file():
+        return None
+    with fichero.open(newline="", encoding="utf-8") as handle:
+        return next(csv.reader(handle), [])
+
+
+def problema_de_cabecera(esquema: StructType, cabecera: list[str]) -> str | None:
+    """Mensaje si la cabecera no cumple el esquema declarado; `None` si cuadra.
+
+    Se comprueban dos cosas, y el orden importa tanto como los nombres: un
+    esquema explicito se aplica **por posicion**. PySpark avisa del desorden si
+    se lee con `enforceSchema=False`, pero Sail ignora esa opcion y devolveria
+    las columnas cruzadas sin un solo error, asi que se comprueba aqui para que
+    el comportamiento sea el mismo en los dos backends.
+    """
+    declaradas = esquema.fieldNames()
+    faltan = [columna for columna in declaradas if columna not in cabecera]
+    if faltan:
+        return f"al fichero le faltan columnas declaradas {faltan}; tiene {cabecera}"
+    if cabecera[: len(declaradas)] != declaradas:
+        return (
+            f"las columnas estan en otro orden: el esquema dice {declaradas} y el "
+            f"fichero {cabecera}. Un esquema explicito se aplica por posicion, "
+            "asi que los datos saldrian cruzados"
+        )
+    return None
