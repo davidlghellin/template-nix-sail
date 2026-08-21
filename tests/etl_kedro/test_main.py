@@ -4,9 +4,12 @@ import csv
 import glob
 import os
 from dataclasses import replace
+from typing import cast
 
 import pytest
+from pyspark.sql import SparkSession
 
+from etl_kedro.core.config import Config
 from etl_kedro.jobs.ciudades import job as ciudades_job
 from etl_kedro.jobs.ciudades.datasets import CIUDADES_DEDUP, CIUDADES_RAW
 from etl_kedro.jobs.por_ccaa import job as por_ccaa_job
@@ -16,6 +19,7 @@ from etl_kedro.main import (
     EXIT_INPUT,
     EXIT_OK,
     EXIT_QUALITY,
+    ejecutar_job,
     main,
     parse_args,
 )
@@ -197,3 +201,51 @@ def test_main_columna_clave_inexistente_devuelve_exit_quality(cli, csv_con_dupli
 
     assert codigo == EXIT_QUALITY
     assert not (tmp_path / "out").exists()  # no escribe nada si falla el check
+
+
+# --- ejecutar_job: solo se pasa lo que el usuario pidio ---
+
+
+# `ejecutar_job` solo pasa la sesion al job, y el espia no la usa: estos tests
+# son de cableado y no levantan Spark.
+SIN_SESION = cast(SparkSession, None)
+
+
+@pytest.fixture
+def job_espia(monkeypatch):
+    """Sustituye `load_job` por un job que anota con que opciones lo llaman."""
+    recibido: dict[str, object] = {}
+
+    def run_falso(spark, **opciones):
+        recibido.update(opciones)
+
+    modulo = type("modulo", (), {"run": staticmethod(run_falso)})
+    monkeypatch.setattr(
+        "etl_kedro.main.load_job",
+        lambda nombre: type("Job", (), {"modulo": modulo}),
+    )
+    return recibido
+
+
+def test_ejecutar_job_no_pasa_lo_que_no_se_ha_pedido(job_espia):
+    """Sin --input/--output/--key-col no se pasan esas claves, ni como None.
+
+    Asi cada job aplica su propio valor por defecto (su clave, sus rutas) en vez
+    de recibir un centinela que tenga que interpretar.
+    """
+    ejecutar_job(SIN_SESION, "ciudades", parse_args([]), Config())
+
+    assert "input_path" not in job_espia
+    assert "output_path" not in job_espia
+    assert "key_col" not in job_espia
+    assert job_espia["mode"] == "overwrite"
+
+
+def test_ejecutar_job_pasa_lo_que_si_se_ha_pedido(job_espia):
+    args = parse_args(["--input", "in.csv", "--output", "out", "--key-col", "ciudad"])
+
+    ejecutar_job(SIN_SESION, "ciudades", args, Config())
+
+    assert job_espia["input_path"] == "in.csv"
+    assert job_espia["output_path"] == "out"
+    assert job_espia["key_col"] == "ciudad"

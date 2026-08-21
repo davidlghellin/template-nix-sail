@@ -92,19 +92,23 @@ def ejecutar_job(
     nombre: str,
     args: argparse.Namespace,
     config: Config,
-    usar_rutas: bool,
 ) -> None:
     """Lanza un job por nombre, pasando solo lo que el usuario haya pedido.
 
-    Lo que no se especifica no se pasa, para que cada job aplique su propio
-    valor por defecto (su clave, sus rutas) en vez de heredar el de otro.
+    Lo que no se especifica no se pasa: cada job aplica entonces su propio valor
+    por defecto (su clave, sus rutas) en vez de recibir un `None` que le obligue
+    a tratarlo como centinela.
+
+    No hace falta distinguir `--all`: al parsear ya se rechaza combinarlo con
+    `--input`/`--output`, asi que en ese caso no hay rutas que pasar.
     """
     modulo = load_job(nombre).modulo
     opciones: dict[str, object] = {"mode": args.mode, "config": config}
     if args.key_col:
         opciones["key_col"] = args.key_col
-    if usar_rutas:
+    if args.input:
         opciones["input_path"] = args.input
+    if args.output:
         opciones["output_path"] = args.output
 
     logger.info("--- job %s ---", nombre)
@@ -145,7 +149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             check_input_exists(args.input)
         with spark_session() as spark:
             for nombre in a_ejecutar:
-                ejecutar_job(spark, nombre, args, config, usar_rutas=not args.all)
+                ejecutar_job(spark, nombre, args, config)
     # Los fallos de dato y de entorno son esperables y se explican solos: basta
     # el mensaje. El traceback se reserva para lo que si es un bug.
     except QualityCheckError as exc:

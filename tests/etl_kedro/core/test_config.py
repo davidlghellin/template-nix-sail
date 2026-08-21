@@ -47,6 +47,21 @@ def test_fuera_de_dev_la_raiz_es_obligatoria(monkeypatch, entorno):
         Config.desde_entorno()
 
 
+@pytest.mark.parametrize("valor", ["", "   "])
+@pytest.mark.parametrize("entorno", ["pre", "pro"])
+def test_una_raiz_vacia_cuenta_como_no_configurada(monkeypatch, entorno, valor):
+    """`export ETL_DATA_ROOT=` no puede colar como raiz valida.
+
+    Sin esto la config pasaba y las rutas relativas se resolvian contra el
+    directorio local: un job de `pro` escribiendo en el `data/` de al lado.
+    """
+    monkeypatch.setenv("ETL_ENV", entorno)
+    monkeypatch.setenv("ETL_DATA_ROOT", valor)
+
+    with pytest.raises(ConfigError, match="ETL_DATA_ROOT"):
+        Config.desde_entorno()
+
+
 def test_la_raiz_se_lee_del_entorno(monkeypatch):
     monkeypatch.setenv("ETL_DATA_ROOT", "s3://bucket/zona")
 

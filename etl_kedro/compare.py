@@ -99,7 +99,9 @@ def ejecutar(backend: str, raiz: Path) -> subprocess.CompletedProcess:
     )
 
 
-def comparar_dataset(nombre: str, ruta_a: Path, ruta_b: Path, backends: tuple[str, str]) -> list:
+def comparar_dataset(
+    nombre: str, ruta_a: Path, ruta_b: Path, backends: tuple[str, str]
+) -> list[Diferencia]:
     """Compara esquema y filas de un dataset escrito por los dos backends."""
     a, b = backends
     diferencias: list[Diferencia] = []

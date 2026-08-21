@@ -53,7 +53,11 @@ class Config:
                 f"{VAR_ENTORNO} invalido: {entorno!r}. Validos: {', '.join(ENTORNOS)}"
             )
 
-        raiz = os.environ.get(VAR_RAIZ)
+        # Vacia cuenta como no configurada: `export ETL_DATA_ROOT=` o una
+        # variable sin valor en el contenedor pasarian la validacion y luego
+        # resolverian las rutas contra el directorio local, que es exactamente
+        # lo que esto trata de evitar.
+        raiz = (os.environ.get(VAR_RAIZ) or "").strip() or None
         if raiz is None:
             if entorno != "dev":
                 raise ConfigError(
