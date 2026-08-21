@@ -75,8 +75,10 @@ def main():
 
     # Read Spanish cities CSV
     logger.info("Reading Spanish cities CSV...")
-    df = spark.read.option("header", "true").option("inferSchema", "true").csv(
-        "resources/ciudades_espana.csv"
+    df = (
+        spark.read.option("header", "true")
+        .option("inferSchema", "true")
+        .csv("resources/ciudades_espana.csv")
     )
 
     logger.info("Total cities: %s", df.count())

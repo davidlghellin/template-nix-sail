@@ -6,10 +6,26 @@ import time
 import pytest
 from pyspark.sql import SparkSession
 
+VALID_BACKENDS = ("pysail", "pyspark")
+DEFAULT_BACKEND = "pysail"
+
 
 def get_spark_backend():
     """Determine which backend to use based on environment variable."""
-    return os.environ.get("SPARK_BACKEND", "pysail")
+    return os.environ.get("SPARK_BACKEND", DEFAULT_BACKEND)
+
+
+def pytest_configure(config):
+    """Reject an unknown SPARK_BACKEND before any test runs.
+
+    Falling back to PySail on a typo is the worst outcome: the suite goes green
+    and the header claims a backend that never ran.
+    """
+    backend = get_spark_backend()
+    if backend not in VALID_BACKENDS:
+        raise pytest.UsageError(
+            f"SPARK_BACKEND invalido: {backend!r}. Validos: {', '.join(VALID_BACKENDS)}"
+        )
 
 
 def pytest_report_header():

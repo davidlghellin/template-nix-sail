@@ -2,8 +2,8 @@
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["src"]
+[tool.setuptools.packages.find]
+include = ["devel0pez*", "etl_kedro*"]
 
 [project]
 name = "dev-nix-sail"
@@ -22,10 +22,54 @@ dependencies = [
 ]
 
 [project.scripts]
-dev-nix-sail = "src.main:main"
+dev-nix-sail = "devel0pez.main:main"
+etl-kedro = "etl_kedro.main:main"
 
 [project.optional-dependencies]
-dev = ["pytest==9.1.1", "ruff==0.16.0", "build>=1.0"]
+dev = [
+    "pytest==9.1.1",
+    "pytest-cov>=6.0",
+    "mypy>=1.14",
+    "ruff==0.16.0",
+    "hatch>=1.14",
+    "build>=1.0",
+]
+
+# Los scripts de hatch envuelven las mismas herramientas que ya trae el shell de
+# Nix, para poder lanzarlas igual fuera de el (`hatch run test|typecheck|lint`).
+[tool.hatch.envs.default]
+features = ["dev"]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:-v}"
+test-cov = "pytest --cov=etl_kedro --cov-report=term-missing {args:-v}"
+typecheck = "mypy {args:etl_kedro tests}"
+lint = "ruff check {args:.}"
+
+[tool.mypy]
+# Sin `python_version`: se analiza con la version del interprete activo. Fijarlo
+# a 3.10 rompe al leer los stubs de numpy, que usan sintaxis de 3.12.
+files = ["etl_kedro", "tests"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+# Las funciones de la ETL van tipadas; los tests usan fixtures de pytest sin
+# anotar, asi que solo se les exige que el cuerpo cuadre.
+[[tool.mypy.overrides]]
+module = "etl_kedro.*"
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "pysail.*"
+ignore_missing_imports = true
+
+# pyarrow viene con pyspark pero no trae stubs ni py.typed.
+[[tool.mypy.overrides]]
+module = "pyarrow.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -43,4 +87,4 @@ line-length = 100
 select = ["E", "F", "I", "W"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["src"]
+known-first-party = ["devel0pez", "etl_kedro"]

@@ -6,17 +6,26 @@ Nix-configured development environment for Sail/PySpark.
 
 ```
 dev-nix-sail/
-├── src/
+├── devel0pez/             # Library: demos and compatibility base case
 │   ├── calculator.py      # Math functions
 │   ├── dataframes.py      # DataFrame functions
 │   ├── caso_base.py       # Compatibility base case (schemas + ETL)
 │   └── main.py            # Interactive demo
+├── etl_kedro/             # CSV ETL, estilo Kedro (see README_ETL_KEDRO.md)
+│   ├── main.py            # argparse CLI
+│   ├── core/              # reusable machinery: pipeline, quality, session
+│   └── jobs/ciudades/     # one flow per folder: datasets, transform, job
 ├── tests/
-│   ├── conftest.py        # Fixtures (spark)
-│   ├── test_calculator.py # Unit tests
-│   ├── test_dataframes.py # DataFrame tests
-│   ├── test_caso_base.py  # Base case: expressions, join, schema
-│   └── test_caso_base_catalogo.py # Base case end to end: catalog + insertInto
+│   ├── conftest.py        # Fixtures (spark), shared by every subpackage
+│   ├── devel0pez/
+│   │   ├── test_calculator.py # Unit tests
+│   │   ├── test_dataframes.py # DataFrame tests
+│   │   ├── test_caso_base.py  # Base case: expressions, join, schema
+│   │   └── test_caso_base_catalogo.py # Base case end to end: catalog + insertInto
+│   └── etl_kedro/
+│       ├── test_main.py       # CLI: args and exit codes
+│       ├── core/              # pipeline, quality, datasets, session
+│       └── jobs/ciudades/     # the ciudades job end to end
 ├── resources/
 │   └── ciudades_espana.csv # 100 Spanish cities dataset
 ├── .ptpython/
@@ -75,7 +84,7 @@ Press `Ctrl+R` for fzf fuzzy history search in bash.
 ### Demo
 
 ```bash
-python src/main.py
+python devel0pez/main.py
 ```
 
 Auto-detects external Sail server. If unavailable, starts an internal one.
@@ -87,7 +96,7 @@ Auto-detects external Sail server. If unavailable, starts an internal one.
 sail spark server --port 50051
 
 # Connect from another terminal
-python src/main.py
+python devel0pez/main.py
 ```
 
 ### Interactive Terminal
@@ -131,19 +140,19 @@ shell.
 
 ## Available Functions
 
-### `src/calculator.py`
+### `devel0pez/calculator.py`
 
 | Function     | Description      |
 | ------------ | ---------------- |
 | `suma(a, b)` | Adds two numbers |
 
-### `src/dataframes.py`
+### `devel0pez/dataframes.py`
 
 | Function                                   | Description                        |
 | ------------------------------------------ | ---------------------------------- |
 | `suma_columnas(df, col1, col2, nueva_col)` | Sums two columns and adds result   |
 
-### `src/caso_base.py`
+### `devel0pez/caso_base.py`
 
 Shape of a real ETL, used as the compatibility base case between backends: two
 source tables with an explicit `StructType`, a `CASE` + `DISTINCT` filter, a

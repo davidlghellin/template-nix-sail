@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from src.caso_base import (
+from devel0pez.caso_base import (
     AUDIT,
     CORTE,
     FILAS_1,
