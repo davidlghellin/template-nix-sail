@@ -49,15 +49,16 @@ def run(
     pipeline.transform(lambda df: transform.validar(df, key_col), name="validar")
 
     logger.info("== dedup == por %r", key_col)
-    # Cada `count()` es una accion de Spark que recorre el fichero entero. Solo
-    # se pagan si el log va a salir: con --log-level WARNING no se emite la
-    # linea, asi que contar seria trabajo tirado.
-    contar = logger.isEnabledFor(logging.INFO)
+    # Cada `count()` es una accion de Spark que recorre el fichero entero, y la
+    # escritura lo vuelve a leer: con los dos, la entrada se escanea tres veces
+    # para una linea de log. Por eso solo se cuenta en DEBUG, que es cuando se
+    # esta mirando, y no en el INFO de una ejecucion normal.
+    contar = logger.isEnabledFor(logging.DEBUG)
     rows_before = pipeline.count() if contar else 0
     pipeline.transform(lambda df: transform.deduplicar(df, key_col), name="deduplicar")
     if contar:
         rows_after = pipeline.count()
-        logger.info(
+        logger.debug(
             "Deduplicado: %d filas -> %d filas (%d duplicados eliminados)",
             rows_before,
             rows_after,

@@ -56,3 +56,16 @@ def test_dataset_check_exists_falla(tmp_path):
 
     with pytest.raises(FileNotFoundError):
         dataset.check_exists()
+
+
+def test_problema_de_cabecera_rechaza_columnas_sobrantes():
+    from pyspark.sql.types import StringType, StructField, StructType
+
+    from etl_kedro.core.datasets import problema_de_cabecera
+
+    esquema = StructType([StructField("a", StringType()), StructField("b", StringType())])
+
+    problema = problema_de_cabecera(esquema, ["a", "b", "extra"])
+
+    assert problema is not None
+    assert "extra" in problema

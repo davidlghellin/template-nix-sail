@@ -70,12 +70,26 @@ def deduplicate_by_key(df: DataFrame, key_col: str, keep: KeepStrategy = "first"
     check_required_columns(df, [key_col])
 
     original_cols = df.columns
-    ordered = df.withColumn(_ROW_ID_COL, F.monotonically_increasing_id())
-    order_by = F.col(_ROW_ID_COL).asc() if keep == "first" else F.col(_ROW_ID_COL).desc()
+    row_id = _nombre_libre(_ROW_ID_COL, original_cols)
+    row_number = _nombre_libre(_ROW_NUMBER_COL, original_cols)
+    ordered = df.withColumn(row_id, F.monotonically_increasing_id())
+    order_by = F.col(row_id).asc() if keep == "first" else F.col(row_id).desc()
     window = Window.partitionBy(key_col).orderBy(order_by)
 
     return (
-        ordered.withColumn(_ROW_NUMBER_COL, F.row_number().over(window))
-        .filter(F.col(_ROW_NUMBER_COL) == 1)
+        ordered.withColumn(row_number, F.row_number().over(window))
+        .filter(F.col(row_number) == 1)
         .select(*original_cols)
     )
+
+
+def _nombre_libre(base: str, columnas: Sequence[str]) -> str:
+    """Un nombre auxiliar que no coincida con ninguna columna de la entrada.
+
+    `withColumn` sobre un nombre existente lo sustituye, asi que una entrada
+    que ya trajera `__etl_row_id__` saldria con el id en vez de su dato.
+    """
+    nombre = base
+    while nombre in columnas:
+        nombre = f"_{nombre}"
+    return nombre

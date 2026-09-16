@@ -14,7 +14,9 @@ dev-nix-sail/
 ├── etl_kedro/             # CSV ETL, estilo Kedro (see README_ETL_KEDRO.md)
 │   ├── main.py            # argparse CLI
 │   ├── core/              # reusable machinery: pipeline, quality, session
-│   └── jobs/ciudades/     # one flow per folder: datasets, transform, job
+│   └── jobs/              # one flow per folder: datasets, transform, job
+│       ├── ciudades/      #   cleans and deduplicates the source CSV
+│       └── por_ccaa/      #   aggregates population, reading ciudades' output
 ├── tests/
 │   ├── conftest.py        # Fixtures (spark), shared by every subpackage
 │   ├── devel0pez/
@@ -25,7 +27,7 @@ dev-nix-sail/
 │   └── etl_kedro/
 │       ├── test_main.py       # CLI: args and exit codes
 │       ├── core/              # pipeline, quality, datasets, session
-│       └── jobs/ciudades/     # the ciudades job end to end
+│       └── jobs/              # each job end to end: ciudades/, por_ccaa/
 ├── resources/
 │   └── ciudades_espana.csv # 100 Spanish cities dataset
 ├── .ptpython/

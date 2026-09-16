@@ -96,17 +96,28 @@ def cabecera_csv(ruta: str) -> list[str] | None:
 def problema_de_cabecera(esquema: StructType, cabecera: list[str]) -> str | None:
     """Mensaje si la cabecera no cumple el esquema declarado; `None` si cuadra.
 
-    Se comprueban dos cosas, y el orden importa tanto como los nombres: un
-    esquema explicito se aplica **por posicion**. PySpark avisa del desorden si
-    se lee con `enforceSchema=False`, pero Sail ignora esa opcion y devolveria
-    las columnas cruzadas sin un solo error, asi que se comprueba aqui para que
-    el comportamiento sea el mismo en los dos backends.
+    Se comprueban los nombres, que no sobre ninguno y el orden, que importa
+    tanto como los nombres: un esquema explicito se aplica **por posicion**.
+    PySpark avisa del desorden si se lee con `enforceSchema=False`, pero Sail
+    ignora esa opcion y devolveria las columnas cruzadas sin un solo error, asi
+    que se comprueba aqui para que el comportamiento sea el mismo en los dos
+    backends.
+
+    Una columna de mas no la ignora ninguno de los dos: ambos fallan al leer,
+    pero cada uno con su error interno (`SparkRuntimeException` en Sail,
+    `Py4JJavaError` en PySpark), que sale como bug y no como fallo de dato.
     """
     declaradas = esquema.fieldNames()
     faltan = [columna for columna in declaradas if columna not in cabecera]
     if faltan:
         return f"al fichero le faltan columnas declaradas {faltan}; tiene {cabecera}"
-    if cabecera[: len(declaradas)] != declaradas:
+    sobran = [columna for columna in cabecera if columna not in declaradas]
+    if sobran:
+        return (
+            f"el fichero trae columnas que el esquema no declara {sobran}; "
+            f"el esquema dice {declaradas}"
+        )
+    if cabecera != declaradas:
         return (
             f"las columnas estan en otro orden: el esquema dice {declaradas} y el "
             f"fichero {cabecera}. Un esquema explicito se aplica por posicion, "

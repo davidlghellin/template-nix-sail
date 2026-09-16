@@ -43,13 +43,21 @@ def resolve_backend(backend: str | None = None) -> str:
 def check_java_available() -> None:
     """Comprueba que hay una JVM para el backend `pyspark`.
 
-    PySpark mira `JAVA_HOME` antes que el `PATH`, asi que se comprueban en ese
-    mismo orden. Sin esto el fallo llega mas tarde como `JAVA_GATEWAY_EXITED`,
-    que no dice que lo que falta es Java.
+    Se replica la regla de `spark-class`: si `JAVA_HOME` esta definido se usa
+    **ese** y no se mira el `PATH`, aunque apunte a un sitio que no existe. Por
+    eso un `JAVA_HOME` roto es un error aunque haya un `java` en el `PATH`: dar
+    el entorno por bueno ahi seria mentir, y el fallo llegaria despues como
+    `JAVA_GATEWAY_EXITED`, que no dice que el problema es Java.
     """
     java_home = os.environ.get("JAVA_HOME")
-    if java_home and (Path(java_home) / "bin" / "java").is_file():
-        return
+    if java_home:
+        if (Path(java_home) / "bin" / "java").is_file():
+            return
+        raise BackendError(
+            f"El backend 'pyspark' necesita Java y JAVA_HOME apunta a {java_home!r}, "
+            "donde no hay bin/java. PySpark usa JAVA_HOME antes que el PATH, asi que "
+            "corrigelo o quitalo."
+        )
     if shutil.which("java"):
         return
     raise BackendError(

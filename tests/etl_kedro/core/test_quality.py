@@ -169,3 +169,18 @@ def test_checks_encadenados(df_duplicados):
     )
 
     assert resultado.count() == 2
+
+
+def test_deduplicate_no_pisa_columnas_que_se_llamen_como_las_auxiliares(spark):
+    # Una entrada que ya trajera los nombres internos tiene que salir con sus
+    # datos, no con el id o el numero de fila que se calculan por dentro.
+    df = spark.createDataFrame(
+        [("a", "dato-1", "otro-1"), ("a", "dato-2", "otro-2"), ("b", "dato-3", "otro-3")],
+        ["clave", "__etl_row_id__", "__etl_row_number__"],
+    )
+
+    filas = {r["clave"]: r for r in deduplicate_by_key(df, "clave").collect()}
+
+    assert filas["a"]["__etl_row_id__"] == "dato-1"
+    assert filas["a"]["__etl_row_number__"] == "otro-1"
+    assert filas["b"]["__etl_row_id__"] == "dato-3"

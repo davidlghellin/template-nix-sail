@@ -130,3 +130,13 @@ def test_pysail_para_el_servidor_aunque_falle_el_stop_de_spark(monkeypatch):
             pass
 
     assert servidor.parado
+
+
+def test_check_java_available_java_home_roto_no_cae_al_path(monkeypatch, tmp_path):
+    # PySpark usa JAVA_HOME si esta definido, sin mirar el PATH: un java en el
+    # PATH no salva un JAVA_HOME roto, y darlo por bueno seria mentir.
+    monkeypatch.setenv("JAVA_HOME", str(tmp_path / "no-existe"))
+    monkeypatch.setattr("etl_kedro.core.session.shutil.which", lambda _: "/usr/bin/java")
+
+    with pytest.raises(BackendError, match="JAVA_HOME"):
+        check_java_available()

@@ -148,6 +148,17 @@ class ETLPipeline:
         parquet de una cadena que normalmente escribe CSV.
         """
         ruta = path if path is not None else dataset.resolver(config)
+        # El esquema declarado es el contrato del dataset tambien para quien lo
+        # lee despues, que lo aplicara por posicion. Se contrasta antes de
+        # escribir para que una salida que no lo cumple no llegue al disco:
+        # p.ej. un agregado por otra clave que deja `provincia` donde el
+        # catalogo promete `comunidad_autonoma`.
+        if dataset.esquema is not None:
+            problema = problema_de_cabecera(dataset.esquema, self.df.columns)
+            if problema:
+                raise QualityCheckError(
+                    f"[{dataset.nombre}] la salida no cumple el esquema declarado: {problema}"
+                )
         formato = (config or Config()).formato_de(dataset.nombre, dataset.formato)
         if formato == "parquet":
             logger.info("Escribiendo parquet en %s (mode=%s)", ruta, mode)

@@ -175,6 +175,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--backends",
         nargs=2,
         default=list(VALID_BACKENDS),
+        # Sin esto un typo copia datos y lanza un subproceso antes de fallar.
+        choices=VALID_BACKENDS,
         metavar=("A", "B"),
         help=f"Los dos backends a comparar (por defecto: {' '.join(VALID_BACKENDS)})",
     )

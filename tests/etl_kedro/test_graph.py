@@ -224,3 +224,15 @@ def test_main_con_mermaid_imprime_el_diagrama(capsys):
 def test_main_rechaza_un_formato_desconocido():
     with pytest.raises(SystemExit):
         main(["--format", "svg"])
+
+
+def test_un_dataset_con_dos_productores_es_un_error():
+    from etl_kedro.graph import Grafo, Job, ProductorDuplicadoError
+
+    def job_falso(nombre):
+        return Job(nombre=nombre, modulo=None, consume=(), produce=(CIUDADES_DEDUP,))  # type: ignore[arg-type]
+
+    grafo = Grafo(jobs={"a": job_falso("a"), "b": job_falso("b")})
+
+    with pytest.raises(ProductorDuplicadoError, match="a, b"):
+        grafo.productor_de

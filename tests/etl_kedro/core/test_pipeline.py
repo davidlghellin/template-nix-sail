@@ -277,3 +277,28 @@ def test_read_dataset_resuelve_la_ruta_con_la_config(pipeline, csv_entrada):
     pipeline.read_dataset(dataset, Config(entorno="pro", raiz=carpeta))
 
     assert pipeline.count() == 3
+
+
+def test_read_dataset_una_columna_de_mas_es_fallo_de_dato(pipeline, tmp_path):
+    """Los dos motores fallan con una columna extra, cada uno con su error interno.
+
+    Sail da `SparkRuntimeException` y PySpark `Py4JJavaError`: los dos saldrian
+    como bug. Se corta antes, con un error que dice que columna sobra.
+    """
+    path = tmp_path / "extra.csv"
+    path.write_text("id,ciudad,sobrante\n1,madrid,x\n", encoding="utf-8")
+    esquema = StructType([StructField("id", StringType()), StructField("ciudad", StringType())])
+
+    with pytest.raises(QualityCheckError, match="sobrante"):
+        pipeline.read_dataset(Dataset("entrada", str(path), esquema))
+
+
+def test_write_dataset_rechaza_una_salida_que_no_cumple_el_esquema(pipeline, tmp_path):
+    esquema = StructType([StructField("id", StringType()), StructField("ciudad", StringType())])
+    salida = tmp_path / "salida"
+    pipeline._df = pipeline.spark.createDataFrame([("1", "madrid")], ["id", "provincia"])
+
+    with pytest.raises(QualityCheckError, match="no cumple el esquema"):
+        pipeline.write_dataset(Dataset("salida", str(salida), esquema))
+
+    assert not salida.exists()  # no llega al disco

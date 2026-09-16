@@ -16,6 +16,7 @@ from etl_kedro.jobs.por_ccaa import job as por_ccaa_job
 from etl_kedro.jobs.por_ccaa.datasets import POBLACION_POR_CCAA
 from etl_kedro.main import (
     EXIT_BACKEND,
+    EXIT_DRY_RUN,
     EXIT_INPUT,
     EXIT_OK,
     EXIT_QUALITY,
@@ -249,3 +250,31 @@ def test_ejecutar_job_pasa_lo_que_si_se_ha_pedido(job_espia):
     assert job_espia["input_path"] == "in.csv"
     assert job_espia["output_path"] == "out"
     assert job_espia["key_col"] == "ciudad"
+
+
+def test_parse_args_all_no_admite_key_col():
+    # La clave es de cada job: una sola para toda la cadena rompe al menos uno.
+    with pytest.raises(SystemExit):
+        parse_args(["--all", "--key-col", "ciudad"])
+
+
+def test_main_comprueba_las_entradas_del_catalogo_antes_de_arrancar_spark(monkeypatch, tmp_path):
+    """Sin --input, la entrada del catalogo tambien se comprueba antes de la sesion."""
+
+    def sesion_prohibida(*_args, **_kwargs):
+        raise AssertionError("no deberia arrancar Spark para una entrada que no existe")
+
+    monkeypatch.setattr("etl_kedro.main.spark_session", sesion_prohibida)
+    monkeypatch.setenv("ETL_DATA_ROOT", str(tmp_path))  # una raiz vacia
+
+    codigo = main(["--job", "por_ccaa"])
+
+    assert codigo == EXIT_INPUT
+
+
+def test_main_dry_run_de_un_job_revisa_la_ruta_de_input(tmp_path, capsys):
+    codigo = main(["--dry-run", "--input", str(tmp_path / "no-existe.csv")])
+
+    salida = capsys.readouterr().out
+    assert codigo == EXIT_DRY_RUN
+    assert "no-existe.csv" in salida

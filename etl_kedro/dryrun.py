@@ -16,7 +16,7 @@ from pathlib import Path
 
 from etl_kedro.core.config import Config
 from etl_kedro.core.datasets import Dataset, cabecera_csv, problema_de_cabecera
-from etl_kedro.graph import CicloEnElGrafoError, Grafo
+from etl_kedro.graph import CicloEnElGrafoError, Grafo, ProductorDuplicadoError
 
 
 @dataclass(frozen=True)
@@ -66,15 +66,43 @@ def revisar_esquemas(grafo: Grafo) -> list[Problema]:
     return problemas
 
 
-def revisar_entradas(grafo: Grafo, config: Config) -> list[Problema]:
-    """Las entradas externas tienen que existir y traer las columnas declaradas."""
+def entradas_de_la_ejecucion(
+    grafo: Grafo,
+    config: Config,
+    jobs: list[str] | None = None,
+    input_path: str | None = None,
+) -> list[tuple[Dataset, str]]:
+    """Lo que tiene que existir antes de lanzar `jobs`, con la ruta que se leera.
+
+    Es lo que consumen los jobs seleccionados y no produce ninguno de ellos. No
+    es lo mismo que las entradas externas del grafo entero: lanzado suelto,
+    `por_ccaa` necesita la salida de `ciudades`, y no necesita el CSV de origen.
+
+    `input_path` es el `--input` de la CLI, que solo se admite con un job y
+    sustituye la ruta de su entrada tal cual, sin resolverla contra la raiz,
+    igual que hace el job al leer.
+    """
+    seleccion = list(grafo.jobs) if jobs is None else jobs
+    producidos = {d.nombre for nombre in seleccion for d in grafo.jobs[nombre].produce}
+    entradas: dict[str, tuple[Dataset, str]] = {}
+    for nombre in seleccion:
+        for dataset in grafo.jobs[nombre].consume:
+            if dataset.nombre in producidos or dataset.nombre in entradas:
+                continue
+            entradas[dataset.nombre] = (dataset, input_path or dataset.resolver(config))
+    return [entradas[nombre] for nombre in sorted(entradas)]
+
+
+def revisar_entradas(
+    grafo: Grafo,
+    config: Config,
+    jobs: list[str] | None = None,
+    input_path: str | None = None,
+) -> list[Problema]:
+    """Las entradas de la ejecucion tienen que existir y traer las columnas declaradas."""
     problemas = []
-    externas = set(grafo.entradas_externas)
-    for nombre, declaraciones in sorted(_declaraciones(grafo).items()):
-        if nombre not in externas:
-            continue
-        dataset = declaraciones[0][1]
-        ruta = dataset.resolver(config)
+    for dataset, ruta in entradas_de_la_ejecucion(grafo, config, jobs, input_path):
+        nombre = dataset.nombre
         if "://" in ruta:
             continue  # remoto: no se comprueba en seco
         if not Path(ruta).exists():
@@ -101,29 +129,53 @@ def _revisar_cabecera(nombre: str, dataset: Dataset, ruta: str) -> list[Problema
     return [Problema(nombre, problema)] if problema else []
 
 
-def revisar(grafo: Grafo, config: Config) -> list[Problema]:
-    """Todas las comprobaciones en seco."""
+def revisar(
+    grafo: Grafo,
+    config: Config,
+    jobs: list[str] | None = None,
+    input_path: str | None = None,
+) -> list[Problema]:
+    """Todas las comprobaciones en seco.
+
+    La coherencia de esquemas es una propiedad del grafo entero y se revisa
+    siempre sobre todo el. Las entradas, solo las de los `jobs` que se van a
+    lanzar: un job suelto no debe fallar el plan por un fichero que no lee.
+    """
     problemas: list[Problema] = []
     try:
         grafo.orden
-    except CicloEnElGrafoError as exc:
+    except (CicloEnElGrafoError, ProductorDuplicadoError) as exc:
         problemas.append(Problema("grafo", str(exc)))
         return problemas  # sin orden no tiene sentido seguir
     problemas.extend(revisar_esquemas(grafo))
-    problemas.extend(revisar_entradas(grafo, config))
+    problemas.extend(revisar_entradas(grafo, config, jobs, input_path))
     return problemas
 
 
-def render_plan(grafo: Grafo, config: Config, jobs: list[str], problemas: list[Problema]) -> str:
-    """Pinta el plan de ejecucion con las rutas ya resueltas."""
+def render_plan(
+    grafo: Grafo,
+    config: Config,
+    jobs: list[str],
+    problemas: list[Problema],
+    input_path: str | None = None,
+    output_path: str | None = None,
+) -> str:
+    """Pinta el plan de ejecucion con las rutas que de verdad se usarian.
+
+    `input_path` y `output_path` son los `--input`/`--output` de la CLI: si se
+    pasan, el plan los muestra en lugar de las rutas del catalogo, que es lo
+    que haria la ejecucion.
+    """
     lineas = [f"Plan (entorno={config.entorno}, raiz={config.raiz})", ""]
     for posicion, nombre in enumerate(jobs, start=1):
         job = grafo.jobs[nombre]
         lineas.append(f"{posicion}. {nombre}")
         for dataset in job.consume:
-            lineas.append(f"     lee     {dataset.nombre:<22} {dataset.resolver(config)}")
+            ruta = input_path or dataset.resolver(config)
+            lineas.append(f"     lee     {dataset.nombre:<22} {ruta}")
         for dataset in job.produce:
-            lineas.append(f"     escribe {dataset.nombre:<22} {dataset.resolver(config)}")
+            ruta = output_path or dataset.resolver(config)
+            lineas.append(f"     escribe {dataset.nombre:<22} {ruta}")
 
     lineas.append("")
     if problemas:

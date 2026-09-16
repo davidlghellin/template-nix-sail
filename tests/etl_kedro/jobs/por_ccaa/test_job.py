@@ -64,3 +64,16 @@ def test_falla_si_falta_la_columna_de_habitantes(spark, tmp_path):
 
     with pytest.raises(QualityCheckError, match="habitantes"):
         job.run(spark, str(entrada), str(tmp_path / "salida"))
+
+
+def test_una_clave_distinta_no_escribe_una_salida_que_rompa_el_contrato(
+    spark, csv_ciudades, tmp_path
+):
+    # Agrupar por otra columna dejaria `provincia` donde el catalogo promete
+    # `comunidad_autonoma`, y el siguiente que lo lea cruzaria las columnas.
+    salida = tmp_path / "salida"
+
+    with pytest.raises(QualityCheckError, match="comunidad_autonoma"):
+        job.run(spark, csv_ciudades, str(salida), key_col="provincia")
+
+    assert not salida.exists()

@@ -18,7 +18,7 @@ from etl_kedro.core.datasets import check_input_exists
 from etl_kedro.core.logging_conf import VALID_LOG_LEVELS, setup_logging
 from etl_kedro.core.quality import QualityCheckError
 from etl_kedro.core.session import BackendError, spark_session
-from etl_kedro.dryrun import render_plan, revisar
+from etl_kedro.dryrun import entradas_de_la_ejecucion, render_plan, revisar
 from etl_kedro.graph import Grafo, discover_jobs, load_job, nombres_de_jobs
 
 logger = logging.getLogger("etl_kedro.main")
@@ -84,6 +84,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     if args.all and (args.input or args.output):
         parser.error("--all usa las rutas declaradas: no admite --input ni --output")
+    # Por lo mismo que las rutas: la clave es de cada job. En `ciudades` es la
+    # columna por la que se deduplica y en `por_ccaa` la columna agrupada, que
+    # es su salida: una sola clave para toda la cadena rompe al menos uno.
+    if args.all and args.key_col:
+        parser.error("--all usa la clave de cada job: no admite --key-col")
     return args
 
 
@@ -134,19 +139,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         if config.formato_salida:
             # El formato forzado solo alcanza a lo que produce la cadena: las
             # entradas externas las escribio otro. Quien produce que sale del
-            # grafo completo, aunque solo se ejecute un job.
-            config = replace(config, datasets_forzados=frozenset(discover_jobs().productor_de))
+            # grafo completo, aunque solo se ejecute un job; si ya se ha
+            # construido, no se vuelven a importar todos.
+            completo = grafo if args.all or args.dry_run else discover_jobs()
+            config = replace(config, datasets_forzados=frozenset(completo.productor_de))
 
         if args.dry_run:
-            problemas = revisar(grafo, config)
-            print(render_plan(grafo, config, a_ejecutar, problemas))
+            problemas = revisar(grafo, config, a_ejecutar, args.input)
+            print(render_plan(grafo, config, a_ejecutar, problemas, args.input, args.output))
             return EXIT_DRY_RUN if problemas else EXIT_OK
 
         logger.info("ETL iniciada: jobs=%s", ", ".join(a_ejecutar))
         # Antes de la sesion: no tiene sentido arrancar Spark para descubrir que
-        # la ruta esta mal escrita. En la cadena, cada job valida la suya al leer.
-        if args.input:
-            check_input_exists(args.input)
+        # una entrada no esta. Se comprueban todas las de esta ejecucion, las de
+        # `--input` y las del catalogo, y no las que produce un job anterior de
+        # la misma cadena, que aun no existen.
+        for _, ruta in entradas_de_la_ejecucion(grafo, config, a_ejecutar, args.input):
+            check_input_exists(ruta)
         with spark_session() as spark:
             for nombre in a_ejecutar:
                 ejecutar_job(spark, nombre, args, config)

@@ -152,13 +152,14 @@ Sin problemas: esquemas coherentes y entradas presentes.
 ```
 
 Comprueba que no haya ciclos, que nadie declare el mismo dataset con dos rutas o
-dos esquemas, que las entradas externas existan y que la cabecera real del CSV
-traiga las columnas del `StructType` declarado. La cabecera se lee con el `csv`
+dos esquemas, que existan las entradas de lo que se va a lanzar (con `--job`,
+las de ese job y en la ruta de `--input` si se pasa) y que la cabecera real del
+CSV traiga exactamente las columnas del `StructType` declarado, ni una mas. La cabecera se lee con el `csv`
 de Python, sin motor. Si algo falla lo lista y sale con codigo 6:
 
 ```
 1 problema(s):
-  [ciudades_raw] al fichero le faltan columnas declaradas ['habitantes', 'provincia']; tiene ['ciudad', 'poblacion']
+  [ciudades_raw] al fichero le faltan columnas declaradas ['habitantes', 'provincia', 'comunidad_autonoma', 'superficie_km2']; tiene ['ciudad', 'poblacion']
 ```
 
 Que los esquemas cuadren **entre jobs** se cumple por construccion, porque el
@@ -204,7 +205,7 @@ etl-kedro --job por_ccaa
 | `--input`     | del dataset | Sobrescribe la ruta de entrada; incompatible con `--all`       |
 | `--output`    | del dataset | Sobrescribe la ruta de salida; incompatible con `--all`        |
 | `--mode`      | `overwrite` | `overwrite` o `append`                                         |
-| `--key-col`   | del job     | Columna clave: sin nulos y usada para deduplicar               |
+| `--key-col`   | del job     | Columna clave: sin nulos y usada para deduplicar. No con `--all` |
 | `--log-level` | `INFO`      | `DEBUG`, `INFO`, `WARNING` o `ERROR`                           |
 
 ### Logs y datos van por canales distintos
@@ -223,24 +224,26 @@ sale ni un byte. Para capturar los logs hace falta `2>&1 |`.
 
 ### Pasos y logs
 
-La CLI loguea cada etapa (`read`, `validate`, `dedup`, `write`), incluyendo
-cuantos duplicados se han eliminado:
+La CLI loguea cada etapa (`read`, `validate`, `dedup`, `write`). Cuantos
+duplicados se han eliminado sale solo con `--log-level DEBUG`: contarlos recorre
+la entrada dos veces mas, y no merece la pena pagarlo en cada ejecucion normal.
 
 El nombre del logger dice de que capa sale cada linea: `etl_kedro.main` la CLI,
 `etl_kedro.core.*` la maquinaria y `etl_kedro.jobs.<dominio>.job` el flujo concreto.
 
 ```
-| INFO | etl_kedro.main                | ETL iniciada: input=resources/ciudades_espana.csv output=/tmp/salida
-| INFO | etl_kedro.core.session        | Iniciando sesion de Spark (backend=pysail)
-| INFO | etl_kedro.jobs.ciudades.job   | == read == resources/ciudades_espana.csv
-| INFO | etl_kedro.core.pipeline       | CSV leido con columnas ['ciudad', 'habitantes', 'provincia', ...]
-| INFO | etl_kedro.jobs.ciudades.job   | == validate == clave 'provincia'
-| INFO | etl_kedro.core.pipeline       | Aplicando transformacion validar
-| INFO | etl_kedro.jobs.ciudades.job   | == dedup == por 'provincia'
-| INFO | etl_kedro.core.pipeline       | Aplicando transformacion deduplicar
-| INFO | etl_kedro.jobs.ciudades.job   | Deduplicado: 100 filas -> 42 filas (58 duplicados eliminados)
-| INFO | etl_kedro.jobs.ciudades.job   | == write == /tmp/salida (mode=overwrite)
-| INFO | etl_kedro.main                | ETL finalizada correctamente
+| INFO  | etl_kedro.main              | ETL iniciada: jobs=ciudades
+| INFO  | etl_kedro.core.session      | Iniciando sesion de Spark (backend=pysail)
+| INFO  | etl_kedro.main              | --- job ciudades ---
+| INFO  | etl_kedro.jobs.ciudades.job | == read == resources/ciudades_espana.csv
+| INFO  | etl_kedro.core.pipeline     | CSV leido con columnas ['ciudad', 'habitantes', 'provincia', 'comunidad_autonoma', 'superficie_km2']
+| INFO  | etl_kedro.jobs.ciudades.job | == validate == clave 'ciudad'
+| INFO  | etl_kedro.core.pipeline     | Aplicando transformacion validar
+| INFO  | etl_kedro.jobs.ciudades.job | == dedup == por 'ciudad'
+| INFO  | etl_kedro.core.pipeline     | Aplicando transformacion deduplicar
+| DEBUG | etl_kedro.jobs.ciudades.job | Deduplicado: 100 filas -> 100 filas (0 duplicados eliminados)
+| INFO  | etl_kedro.jobs.ciudades.job | == write == /tmp/salida (mode=overwrite)
+| INFO  | etl_kedro.main              | ETL finalizada correctamente
 ```
 
 Codigos de salida:

@@ -37,8 +37,22 @@ class Grafo:
 
     @property
     def productor_de(self) -> dict[str, str]:
-        """Dataset -> nombre del job que lo produce."""
-        return {dataset.nombre: job.nombre for job in self.jobs.values() for dataset in job.produce}
+        """Dataset -> nombre del job que lo produce.
+
+        Un dataset con dos productores es un error, no un empate: un diccionario
+        se quedaria en silencio con el ultimo, y las aristas y el orden
+        enlazarian con el job equivocado.
+        """
+        productor: dict[str, str] = {}
+        for job in self.jobs.values():
+            for dataset in job.produce:
+                otro = productor.setdefault(dataset.nombre, job.nombre)
+                if otro != job.nombre:
+                    raise ProductorDuplicadoError(
+                        f"El dataset {dataset.nombre!r} lo producen dos jobs: "
+                        f"{', '.join(sorted({otro, job.nombre}))}"
+                    )
+        return productor
 
     @property
     def aristas(self) -> list[tuple[str, str, str]]:
@@ -102,6 +116,10 @@ class Grafo:
 
 class CicloEnElGrafoError(RuntimeError):
     """Los jobs se consumen en circulo y no hay orden de ejecucion posible."""
+
+
+class ProductorDuplicadoError(RuntimeError):
+    """Dos jobs declaran producir el mismo dataset y el grafo es ambiguo."""
 
 
 class JobDesconocidoError(RuntimeError):

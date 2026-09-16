@@ -219,3 +219,47 @@ def test_el_dryrun_y_la_lectura_usan_la_misma_comprobacion(tmp_path):
 
     assert del_lector is not None
     assert del_dryrun[0].mensaje == del_lector
+
+
+def test_dos_productores_se_reportan_como_problema():
+    salida = Dataset("salida", "data/salida", ESQUEMA)
+    grafo = Grafo(
+        jobs={"a": job_falso("a", produce=(salida,)), "b": job_falso("b", produce=(salida,))}
+    )
+
+    problemas = revisar(grafo, Config())
+
+    assert len(problemas) == 1
+    assert "dos jobs" in problemas[0].mensaje
+
+
+def test_un_job_suelto_solo_revisa_sus_propias_entradas(tmp_path):
+    # `por_ccaa` lanzado solo lee la salida de `ciudades`, no el CSV de origen:
+    # que falte el origen no es un problema de ese plan.
+    origen = Dataset("origen", str(tmp_path / "no-existe.csv"), ESQUEMA)
+    intermedio = Dataset("intermedio", str(tmp_path / "intermedio.csv"), ESQUEMA)
+    (tmp_path / "intermedio.csv").write_text("ciudad,habitantes\nmadrid,1\n", encoding="utf-8")
+    grafo = Grafo(
+        jobs={
+            "a": job_falso("a", consume=(origen,), produce=(intermedio,)),
+            "b": job_falso("b", consume=(intermedio,)),
+        }
+    )
+
+    assert revisar(grafo, Config(), jobs=["b"]) == []
+    assert len(revisar(grafo, Config(), jobs=["a"])) == 1
+
+
+def test_el_plan_usa_las_rutas_de_la_cli(tmp_path):
+    entrada = tmp_path / "otra.csv"
+    entrada.write_text("ciudad,habitantes\nmadrid,1\n", encoding="utf-8")
+    grafo = discover_jobs()
+
+    problemas = revisar(grafo, Config(), ["ciudades"], str(tmp_path / "no-existe.csv"))
+    plan = render_plan(grafo, Config(), ["ciudades"], [], str(entrada), "/tmp/fuera")
+
+    # Revisa la ruta que se leeria, no la del catalogo.
+    assert len(problemas) == 1
+    assert "no-existe.csv" in problemas[0].mensaje
+    assert str(entrada) in plan
+    assert "/tmp/fuera" in plan
