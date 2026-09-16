@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from etl_kedro.core.config import Config
-from etl_kedro.core.datasets import Dataset, cabecera_csv, problema_de_cabecera
+from etl_kedro.core.datasets import (
+    Dataset,
+    cabecera_csv,
+    problema_de_cabecera,
+    se_comprueba_en_local,
+)
 from etl_kedro.graph import CicloEnElGrafoError, Grafo, ProductorDuplicadoError
 
 
@@ -103,8 +108,8 @@ def revisar_entradas(
     problemas = []
     for dataset, ruta in entradas_de_la_ejecucion(grafo, config, jobs, input_path):
         nombre = dataset.nombre
-        if "://" in ruta:
-            continue  # remoto: no se comprueba en seco
+        if not se_comprueba_en_local(ruta):
+            continue  # remoto o con comodines: lo resuelve el motor al leer
         if not Path(ruta).exists():
             problemas.append(Problema(nombre, f"no existe la entrada: {ruta}"))
             continue

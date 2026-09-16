@@ -97,3 +97,8 @@ def test_un_uri_escapa_de_la_raiz():
     config = Config(entorno="pro", raiz="s3://bucket/oro")
 
     assert config.resolver("gs://otro/datos.csv") == "gs://otro/datos.csv"
+
+
+def test_la_raiz_del_sistema_de_ficheros_no_cae_en_el_directorio_actual():
+    # Quitar la barra final dejaba la raiz vacia y la ruta se quedaba relativa.
+    assert Config(entorno="pro", raiz="/").resolver("data/x") == "/data/x"

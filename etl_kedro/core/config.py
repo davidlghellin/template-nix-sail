@@ -36,8 +36,8 @@ class Config:
     entorno: str = ENTORNO_POR_DEFECTO
     raiz: str = RAIZ_EN_DEV
     # Sobrescribe el formato que declara cada dataset. `None` es lo normal: cada
-    # uno escribe en el suyo. Se fuerza para comparar backends, donde hace falta
-    # un formato que conserve los tipos (`etl_kedro.compare`).
+    # uno escribe en el suyo. Se fuerza cuando hace falta un formato que conserve
+    # los tipos, como en el test e2e, que escribe parquet para comprobarlos.
     formato_salida: str | None = None
     # A que datasets alcanza esa sobrescritura: los que produce la cadena. Sale
     # del grafo, no de una lista a mano. Las entradas externas no se tocan, que
@@ -92,6 +92,10 @@ class Config:
         """
         if "://" in ruta or ruta.startswith("/"):
             return ruta
+        if self.raiz.strip("/") == "" and self.raiz.startswith("/"):
+            # La raiz del sistema de ficheros. Sin este caso, quitar la barra
+            # final la dejaria vacia y la ruta caeria en el directorio actual.
+            return f"/{ruta}"
         raiz = self.raiz.rstrip("/")
         if raiz in ("", "."):
             return ruta

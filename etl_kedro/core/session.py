@@ -51,12 +51,14 @@ def check_java_available() -> None:
     """
     java_home = os.environ.get("JAVA_HOME")
     if java_home:
-        if (Path(java_home) / "bin" / "java").is_file():
+        java = Path(java_home) / "bin" / "java"
+        # Que exista no basta: sin permiso de ejecucion falla igual al lanzarlo.
+        if java.is_file() and os.access(java, os.X_OK):
             return
         raise BackendError(
             f"El backend 'pyspark' necesita Java y JAVA_HOME apunta a {java_home!r}, "
-            "donde no hay bin/java. PySpark usa JAVA_HOME antes que el PATH, asi que "
-            "corrigelo o quitalo."
+            "donde no hay un bin/java ejecutable. PySpark usa JAVA_HOME antes que el "
+            "PATH, asi que corrigelo o quitalo."
         )
     if shutil.which("java"):
         return

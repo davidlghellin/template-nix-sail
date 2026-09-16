@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.types import StructType
 
 from etl_kedro.core.config import Config
 from etl_kedro.core.datasets import (
@@ -23,6 +24,24 @@ TransformFunc = Callable[[DataFrame], DataFrame]
 # conviene pasar un `schema` explicito via kwargs y evitar la doble pasada.
 DEFAULT_READ_OPTIONS: dict[str, Any] = {"header": True, "inferSchema": True}
 DEFAULT_WRITE_OPTIONS: dict[str, Any] = {"header": True}
+
+
+def _tipos_distintos(declarado: StructType, real: StructType) -> str | None:
+    """Mensaje si alguna columna sale con otro tipo que el declarado.
+
+    Se comparan tipos y no nulabilidad: un agregado o un join marcan columnas
+    como anulables aunque no lleguen nulos, y eso no cambia lo que se escribe.
+    Importa sobre todo en parquet, que guarda el tipo con el dato; en CSV todo
+    acaba en texto, pero quien lo lea despues aplicara el esquema declarado.
+    """
+    reales = {campo.name: campo.dataType for campo in real.fields}
+    distintos = [
+        f"{campo.name}: declarado {campo.dataType.simpleString()}, "
+        f"sale {reales[campo.name].simpleString()}"
+        for campo in declarado.fields
+        if campo.name in reales and reales[campo.name] != campo.dataType
+    ]
+    return f"columnas con otro tipo: {'; '.join(distintos)}" if distintos else None
 
 
 class PipelineStateError(RuntimeError):
@@ -144,8 +163,8 @@ class ETLPipeline:
 
         Simetrico de `read_dataset`: el catalogo manda tambien al escribir, en
         vez de que cada job elija formato por su cuenta. El entorno puede
-        forzarlo (`ETL_OUTPUT_FORMAT`), que es como `etl_kedro.compare` obtiene
-        parquet de una cadena que normalmente escribe CSV.
+        forzarlo (`ETL_OUTPUT_FORMAT`), que es como el test e2e obtiene parquet
+        de una cadena que normalmente escribe CSV.
         """
         ruta = path if path is not None else dataset.resolver(config)
         # El esquema declarado es el contrato del dataset tambien para quien lo
@@ -154,7 +173,9 @@ class ETLPipeline:
         # p.ej. un agregado por otra clave que deja `provincia` donde el
         # catalogo promete `comunidad_autonoma`.
         if dataset.esquema is not None:
-            problema = problema_de_cabecera(dataset.esquema, self.df.columns)
+            problema = problema_de_cabecera(dataset.esquema, self.df.columns) or _tipos_distintos(
+                dataset.esquema, self.df.schema
+            )
             if problema:
                 raise QualityCheckError(
                     f"[{dataset.nombre}] la salida no cumple el esquema declarado: {problema}"

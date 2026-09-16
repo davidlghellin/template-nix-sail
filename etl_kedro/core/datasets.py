@@ -53,6 +53,17 @@ class Dataset:
         check_input_exists(self.resolver(config))
 
 
+def se_comprueba_en_local(path: str) -> bool:
+    """True si `path` es una ruta local concreta que Python puede mirar.
+
+    Un URI (`s3://...`) o un patron con comodines los resuelve el motor, y
+    `Path.exists()` diria que no existen. Es la unica regla para decidirlo:
+    la ejecucion, la lectura de cabeceras y el dry-run la comparten, para que
+    el dry-run no rechace lo que una ejecucion real acepta.
+    """
+    return URI_SEPARATOR not in path and not any(char in path for char in GLOB_CHARS)
+
+
 def check_input_exists(path: str) -> None:
     """Comprueba que la entrada existe antes de arrancar Spark.
 
@@ -60,10 +71,9 @@ def check_input_exists(path: str) -> None:
     el error que sale es "faltan columnas requeridas", que manda a depurar el
     esquema cuando el problema es la ruta.
 
-    Solo se comprueban rutas locales concretas: un URI (`s3://...`) o un patron
-    con comodines los resuelve el motor, y `Path.exists()` diria que no existen.
+    Solo se comprueban rutas locales concretas (`se_comprueba_en_local`).
     """
-    if URI_SEPARATOR in path or any(char in path for char in GLOB_CHARS):
+    if not se_comprueba_en_local(path):
         return
     if not Path(path).exists():
         raise FileNotFoundError(f"No existe la ruta de entrada: {path}")
@@ -79,7 +89,7 @@ def cabecera_csv(ruta: str) -> list[str] | None:
     Una salida de Spark es un directorio de `part-*.csv`, todos con la misma
     cabecera: basta con el primero.
     """
-    if URI_SEPARATOR in ruta or any(char in ruta for char in GLOB_CHARS):
+    if not se_comprueba_en_local(ruta):
         return None
     fichero = Path(ruta)
     if fichero.is_dir():

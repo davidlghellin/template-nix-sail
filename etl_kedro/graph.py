@@ -122,6 +122,10 @@ class ProductorDuplicadoError(RuntimeError):
     """Dos jobs declaran producir el mismo dataset y el grafo es ambiguo."""
 
 
+class JobMalDeclaradoError(RuntimeError):
+    """Un job no declara `CONSUME` o `PRODUCE`, y no se puede situar en el grafo."""
+
+
 class JobDesconocidoError(RuntimeError):
     """Se ha pedido un job que no existe como subpaquete de `etl_kedro.jobs`."""
 
@@ -147,11 +151,19 @@ def load_job(nombre: str) -> Job:
             f"No existe el job {nombre!r}. Hay: {', '.join(nombres_de_jobs())}"
         )
     modulo = importlib.import_module(f"etl_kedro.jobs.{nombre}.job")
+    # Sin valor por defecto: un job que olvida declararlos quedaria en el grafo
+    # como si no dependiera de nadie, y `--all` lo lanzaria antes de que exista
+    # su entrada. Un job sin entradas lo dice explicitamente con `CONSUME = ()`.
+    faltan = [attr for attr in ("CONSUME", "PRODUCE") if not hasattr(modulo, attr)]
+    if faltan:
+        raise JobMalDeclaradoError(
+            f"El job {nombre!r} no declara {' ni '.join(faltan)} en su job.py"
+        )
     return Job(
         nombre=nombre,
         modulo=modulo,
-        consume=tuple(getattr(modulo, "CONSUME", ())),
-        produce=tuple(getattr(modulo, "PRODUCE", ())),
+        consume=tuple(modulo.CONSUME),
+        produce=tuple(modulo.PRODUCE),
     )
 
 

@@ -302,3 +302,15 @@ def test_write_dataset_rechaza_una_salida_que_no_cumple_el_esquema(pipeline, tmp
         pipeline.write_dataset(Dataset("salida", str(salida), esquema))
 
     assert not salida.exists()  # no llega al disco
+
+
+def test_write_dataset_rechaza_una_columna_con_otro_tipo(pipeline, tmp_path):
+    # Mismos nombres, otro tipo: en parquet se escribiria el tipo equivocado.
+    esquema = StructType([StructField("id", StringType()), StructField("habitantes", LongType())])
+    salida = tmp_path / "salida"
+    pipeline._df = pipeline.spark.createDataFrame([("1", "3200000")], ["id", "habitantes"])
+
+    with pytest.raises(QualityCheckError, match="habitantes: declarado bigint, sale string"):
+        pipeline.write_dataset(Dataset("salida", str(salida), esquema))
+
+    assert not salida.exists()

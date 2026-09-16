@@ -263,3 +263,11 @@ def test_el_plan_usa_las_rutas_de_la_cli(tmp_path):
     assert "no-existe.csv" in problemas[0].mensaje
     assert str(entrada) in plan
     assert "/tmp/fuera" in plan
+
+
+def test_una_entrada_con_comodines_no_se_da_por_inexistente(tmp_path):
+    # La ejecucion la acepta porque la resuelve el motor: el dry-run tambien.
+    entrada = Dataset("entrada", str(tmp_path / "datos" / "*.csv"), ESQUEMA)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
+
+    assert revisar_entradas(grafo, Config()) == []

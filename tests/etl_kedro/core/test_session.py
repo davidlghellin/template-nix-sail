@@ -40,6 +40,7 @@ def test_check_java_available_con_java_home(monkeypatch, tmp_path):
     java = tmp_path / "bin" / "java"
     java.parent.mkdir()
     java.touch()
+    java.chmod(0o755)
     monkeypatch.setenv("JAVA_HOME", str(tmp_path))
 
     check_java_available()  # no lanza
@@ -139,4 +140,16 @@ def test_check_java_available_java_home_roto_no_cae_al_path(monkeypatch, tmp_pat
     monkeypatch.setattr("etl_kedro.core.session.shutil.which", lambda _: "/usr/bin/java")
 
     with pytest.raises(BackendError, match="JAVA_HOME"):
+        check_java_available()
+
+
+def test_check_java_available_java_sin_permiso_de_ejecucion(monkeypatch, tmp_path):
+    # Existir no basta: sin permiso de ejecucion Spark falla igual al lanzarlo.
+    java = tmp_path / "bin" / "java"
+    java.parent.mkdir()
+    java.touch()
+    java.chmod(0o644)
+    monkeypatch.setenv("JAVA_HOME", str(tmp_path))
+
+    with pytest.raises(BackendError, match="ejecutable"):
         check_java_available()

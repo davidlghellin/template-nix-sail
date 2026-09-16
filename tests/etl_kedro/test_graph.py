@@ -236,3 +236,16 @@ def test_un_dataset_con_dos_productores_es_un_error():
 
     with pytest.raises(ProductorDuplicadoError, match="a, b"):
         grafo.productor_de
+
+
+def test_un_job_sin_declarar_consume_o_produce_no_se_carga(monkeypatch):
+    import types
+
+    from etl_kedro.graph import JobMalDeclaradoError
+
+    sin_declarar = types.ModuleType("etl_kedro.jobs.ciudades.job")
+    sin_declarar.PRODUCE = ()  # type: ignore[attr-defined]
+    monkeypatch.setattr("etl_kedro.graph.importlib.import_module", lambda _: sin_declarar)
+
+    with pytest.raises(JobMalDeclaradoError, match="CONSUME"):
+        load_job("ciudades")
