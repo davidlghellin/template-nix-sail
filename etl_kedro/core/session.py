@@ -1,0 +1,115 @@
+"""Creacion de la sesion de Spark y validacion del entorno que la ejecuta.
+
+Aqui no hay nada de ningun dato concreto: solo que motor se usa y si la maquina
+puede levantarlo.
+"""
+
+import logging
+import os
+import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+from pyspark.sql import SparkSession
+
+logger = logging.getLogger(__name__)
+
+APP_NAME = "etl-csv"
+
+VALID_BACKENDS = ("pysail", "pyspark")
+DEFAULT_BACKEND = "pysail"
+
+
+class BackendError(RuntimeError):
+    """El backend pedido no existe o el entorno no puede ejecutarlo."""
+
+
+def resolve_backend(backend: str | None = None) -> str:
+    """Devuelve el backend a usar, validado.
+
+    Sin argumento lee `SPARK_BACKEND`. Un valor desconocido es un error y no un
+    silencioso "pues pysail": si te equivocas al escribir `pyspark` quieres
+    enterarte, no creer que has probado la JVM cuando has corrido en Sail.
+    """
+    value = backend if backend is not None else os.environ.get("SPARK_BACKEND", DEFAULT_BACKEND)
+    if value not in VALID_BACKENDS:
+        raise BackendError(
+            f"SPARK_BACKEND invalido: {value!r}. Validos: {', '.join(VALID_BACKENDS)}"
+        )
+    return value
+
+
+def ejecutable_java(sistema: str | None = None) -> str:
+    """Nombre del binario de Java dentro de `JAVA_HOME/bin` en cada sistema.
+
+    El sistema se lee al llamar, no al definir la funcion: asi se puede simular
+    otro en un test.
+    """
+    return "java.exe" if (sistema or os.name) == "nt" else "java"
+
+
+def check_java_available() -> None:
+    """Comprueba que hay una JVM para el backend `pyspark`.
+
+    Se replica la regla de `spark-class`: si `JAVA_HOME` esta definido se usa
+    **ese** y no se mira el `PATH`, aunque apunte a un sitio que no existe. Por
+    eso un `JAVA_HOME` roto es un error aunque haya un `java` en el `PATH`: dar
+    el entorno por bueno ahi seria mentir, y el fallo llegaria despues como
+    `JAVA_GATEWAY_EXITED`, que no dice que el problema es Java.
+    """
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        java = Path(java_home) / "bin" / ejecutable_java()
+        # Que exista no basta: sin permiso de ejecucion falla igual al lanzarlo.
+        if java.is_file() and os.access(java, os.X_OK):
+            return
+        raise BackendError(
+            f"El backend 'pyspark' necesita Java y JAVA_HOME apunta a {java_home!r}, "
+            "donde no hay un bin/java ejecutable. PySpark usa JAVA_HOME antes que el "
+            "PATH, asi que corrigelo o quitalo."
+        )
+    if shutil.which("java"):
+        return
+    raise BackendError(
+        "El backend 'pyspark' necesita Java y no se ha encontrado ninguno "
+        "(ni JAVA_HOME ni 'java' en el PATH). Usa el shell por defecto "
+        "(`nix develop`, que trae JDK 17) o cambia a SPARK_BACKEND=pysail."
+    )
+
+
+@contextmanager
+def spark_session(app_name: str = APP_NAME) -> Iterator[SparkSession]:
+    """Sesion de Spark segun `SPARK_BACKEND` (pysail por defecto, como los tests).
+
+    Con `pyspark` se levanta una sesion local (requiere Java); con `pysail` se
+    arranca un servidor Spark Connect en background y se conecta por `sc://`.
+    """
+    backend = resolve_backend()
+    logger.info("Iniciando sesion de Spark (backend=%s)", backend)
+
+    if backend == "pyspark":
+        check_java_available()
+        spark = SparkSession.builder.master("local[*]").appName(app_name).getOrCreate()
+        try:
+            yield spark
+        finally:
+            spark.stop()
+        return
+
+    from pysail.spark import SparkConnectServer
+
+    server = SparkConnectServer()
+    server.start(background=True)
+    ip, port = server.listening_address
+    # `server.stop()` va en su propio finally: si `spark.stop()` lanza, el
+    # servidor tiene que pararse igual. Si no, queda un Spark Connect vivo
+    # escuchando en un puerto y el proceso no termina.
+    try:
+        spark = SparkSession.builder.remote(f"sc://{ip}:{port}").getOrCreate()
+        try:
+            yield spark
+        finally:
+            spark.stop()
+    finally:
+        server.stop()

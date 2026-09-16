@@ -22,6 +22,10 @@ htmlcov/
 spark-warehouse/
 metastore_db/
 
+# Salidas de los jobs de la ETL (rutas declaradas en sus datasets). Anclado a la
+# raiz: sin la barra ignoraria cualquier carpeta `data/`, fixtures de tests incluidos.
+/data/
+
 # IDE
 .idea/
 .vscode/

@@ -1,6 +1,6 @@
 """DataFrame tests with Spark."""
 
-from src.dataframes import suma_columnas
+from devel0pez.dataframes import suma_columnas
 
 
 def test_suma_columnas_basic(spark):

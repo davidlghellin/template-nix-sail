@@ -1,6 +1,6 @@
 import pytest
 
-from src.calculator import suma
+from devel0pez.calculator import suma
 
 pytestmark = pytest.mark.unit
 

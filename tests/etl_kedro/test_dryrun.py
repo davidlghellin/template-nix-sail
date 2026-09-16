@@ -1,0 +1,295 @@
+"""Tests del dry-run: plan, esquemas y entradas, todo sin arrancar Spark."""
+
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+from pyspark.sql.types import StringType, StructField, StructType
+
+from etl_kedro.core.config import Config
+from etl_kedro.core.datasets import Dataset, problema_de_cabecera
+from etl_kedro.dryrun import render_plan, revisar, revisar_entradas, revisar_esquemas
+from etl_kedro.graph import Grafo, Job, discover_jobs
+
+ESQUEMA = StructType(
+    [StructField("ciudad", StringType(), True), StructField("habitantes", StringType(), True)]
+)
+OTRO_ESQUEMA = StructType([StructField("otra", StringType(), True)])
+
+
+def job_falso(nombre, consume=(), produce=()):
+    return Job(nombre=nombre, modulo=None, consume=consume, produce=produce)  # type: ignore[arg-type]
+
+
+@pytest.fixture
+def csv_correcto(tmp_path):
+    path = tmp_path / "entrada.csv"
+    path.write_text("ciudad,habitantes\nmadrid,3200000\n", encoding="utf-8")
+    return path
+
+
+# --- el proyecto de verdad ---
+
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def test_el_grafo_real_no_tiene_problemas():
+    # La cadena que hay en el repo tiene que pasar el dry-run. La raiz se fija
+    # al repo para que no dependa de desde donde se lance pytest.
+    assert revisar(discover_jobs(), Config(raiz=str(REPO))) == []
+
+
+def test_el_plan_lista_los_jobs_en_orden():
+    grafo = discover_jobs()
+
+    plan = render_plan(grafo, Config(), grafo.orden, [])
+
+    assert "1. ciudades" in plan
+    assert "2. por_ccaa" in plan
+    assert "Sin problemas" in plan
+
+
+def test_el_plan_muestra_las_rutas_del_entorno():
+    grafo = discover_jobs()
+    config = Config(entorno="pro", raiz="s3://bucket/oro")
+
+    plan = render_plan(grafo, config, grafo.orden, [])
+
+    assert "entorno=pro" in plan
+    assert "s3://bucket/oro/data/ciudades_dedup" in plan
+
+
+# --- esquemas ---
+
+
+def test_esquemas_coherentes_cuando_se_importa_el_dataset(csv_correcto):
+    # El consumidor usa el mismo objeto que el productor: no hay nada que casar.
+    compartido = Dataset("intermedio", "data/intermedio", ESQUEMA)
+    grafo = Grafo(
+        jobs={
+            "a": job_falso("a", produce=(compartido,)),
+            "b": job_falso("b", consume=(compartido,)),
+        }
+    )
+
+    assert revisar_esquemas(grafo) == []
+
+
+def test_detecta_el_mismo_dataset_con_dos_esquemas():
+    # El fallo clasico: redeclararlo en vez de importarlo.
+    productor = Dataset("intermedio", "data/intermedio", ESQUEMA)
+    copia = Dataset("intermedio", "data/intermedio", OTRO_ESQUEMA)
+    grafo = Grafo(
+        jobs={"a": job_falso("a", produce=(productor,)), "b": job_falso("b", consume=(copia,))}
+    )
+
+    problemas = revisar_esquemas(grafo)
+
+    assert len(problemas) == 1
+    assert "esquemas distintos" in problemas[0].mensaje
+
+
+def test_detecta_el_mismo_dataset_con_dos_rutas():
+    productor = Dataset("intermedio", "data/aqui", ESQUEMA)
+    copia = Dataset("intermedio", "data/alli", ESQUEMA)
+    grafo = Grafo(
+        jobs={"a": job_falso("a", produce=(productor,)), "b": job_falso("b", consume=(copia,))}
+    )
+
+    problemas = revisar_esquemas(grafo)
+
+    assert len(problemas) == 1
+    assert "rutas distintas" in problemas[0].mensaje
+
+
+# --- entradas ---
+
+
+def test_entrada_externa_correcta(csv_correcto):
+    entrada = Dataset("entrada", str(csv_correcto), ESQUEMA)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
+
+    assert revisar_entradas(grafo, Config()) == []
+
+
+def test_detecta_que_falta_la_entrada(tmp_path):
+    entrada = Dataset("entrada", str(tmp_path / "no-existe.csv"), ESQUEMA)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
+
+    problemas = revisar_entradas(grafo, Config())
+
+    assert len(problemas) == 1
+    assert "no existe la entrada" in problemas[0].mensaje
+
+
+def test_detecta_columnas_que_faltan_en_el_fichero(tmp_path):
+    # El caso real: el CSV de origen ha cambiado de columnas.
+    path = tmp_path / "entrada.csv"
+    path.write_text("ciudad,poblacion\nmadrid,1\n", encoding="utf-8")
+    entrada = Dataset("entrada", str(path), ESQUEMA)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
+
+    problemas = revisar_entradas(grafo, Config())
+
+    assert len(problemas) == 1
+    assert "habitantes" in problemas[0].mensaje
+
+
+def test_no_comprueba_las_entradas_remotas():
+    # Un s3:// no se puede mirar en seco: se deja pasar en vez de dar un falso error.
+    entrada = Dataset("entrada", "s3://bucket/datos.csv", ESQUEMA)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
+
+    assert revisar_entradas(grafo, Config()) == []
+
+
+def test_un_dataset_sin_esquema_no_se_comprueba(csv_correcto):
+    entrada = Dataset("entrada", str(csv_correcto), esquema=None)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
+
+    assert revisar_entradas(grafo, Config()) == []
+
+
+def test_lee_la_cabecera_de_un_directorio_de_partes(tmp_path):
+    # Salida de Spark: un directorio con part-*.csv, no un fichero suelto.
+    directorio = tmp_path / "salida"
+    directorio.mkdir()
+    (directorio / "part-00000.csv").write_text("ciudad,habitantes\nmadrid,1\n", encoding="utf-8")
+    entrada = Dataset("entrada", str(directorio), ESQUEMA)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
+
+    assert revisar_entradas(grafo, Config()) == []
+
+
+def test_el_plan_lista_los_problemas(tmp_path):
+    entrada = Dataset("entrada", str(tmp_path / "no-existe.csv"), ESQUEMA)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,), produce=())})
+    problemas = revisar(grafo, Config())
+
+    plan = render_plan(grafo, Config(), ["a"], problemas)
+
+    assert "1 problema(s):" in plan
+    assert "[entrada]" in plan
+
+
+def test_un_ciclo_se_reporta_como_problema():
+    a_out = Dataset("de_a", "data/a", ESQUEMA)
+    b_out = Dataset("de_b", "data/b", ESQUEMA)
+    grafo = Grafo(
+        jobs={
+            "a": job_falso("a", consume=(b_out,), produce=(a_out,)),
+            "b": job_falso("b", consume=(a_out,), produce=(b_out,)),
+        }
+    )
+
+    problemas = revisar(grafo, Config())
+
+    assert len(problemas) == 1
+    assert "ciclo" in problemas[0].mensaje
+
+
+def test_dataset_resolver_usa_la_config():
+    dataset = Dataset("x", "data/x", ESQUEMA)
+
+    assert dataset.resolver(Config(entorno="pro", raiz="/lago")) == "/lago/data/x"
+    assert replace(dataset, ruta="/fijo/x").resolver(Config(raiz="/lago")) == "/fijo/x"
+
+
+def test_las_columnas_en_otro_orden_no_son_un_problema(tmp_path):
+    # Se leen por nombre, asi que el orden del fichero da igual.
+    path = tmp_path / "entrada.csv"
+    path.write_text("habitantes,ciudad\n3200000,madrid\n", encoding="utf-8")
+    entrada = Dataset("entrada", str(path), ESQUEMA)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
+
+    assert revisar_entradas(grafo, Config()) == []
+
+
+def test_el_dryrun_y_la_lectura_usan_la_misma_comprobacion(tmp_path):
+    # Lo que el dry-run da por bueno no puede fallar al leer, ni al reves.
+    path = tmp_path / "entrada.csv"
+    path.write_text("ciudad,sobrante\nmadrid,x\n", encoding="utf-8")
+    entrada = Dataset("entrada", str(path), ESQUEMA)
+
+    del_dryrun = revisar_entradas(Grafo(jobs={"a": job_falso("a", consume=(entrada,))}), Config())
+    del_lector = problema_de_cabecera(ESQUEMA, ["ciudad", "sobrante"])
+
+    assert del_lector is not None
+    assert del_dryrun[0].mensaje == del_lector
+
+
+def test_dos_productores_se_reportan_como_problema():
+    salida = Dataset("salida", "data/salida", ESQUEMA)
+    grafo = Grafo(
+        jobs={"a": job_falso("a", produce=(salida,)), "b": job_falso("b", produce=(salida,))}
+    )
+
+    problemas = revisar(grafo, Config())
+
+    assert len(problemas) == 1
+    assert "dos jobs" in problemas[0].mensaje
+
+
+def test_un_job_suelto_solo_revisa_sus_propias_entradas(tmp_path):
+    # `por_ccaa` lanzado solo lee la salida de `ciudades`, no el CSV de origen:
+    # que falte el origen no es un problema de ese plan.
+    origen = Dataset("origen", str(tmp_path / "no-existe.csv"), ESQUEMA)
+    intermedio = Dataset("intermedio", str(tmp_path / "intermedio.csv"), ESQUEMA)
+    (tmp_path / "intermedio.csv").write_text("ciudad,habitantes\nmadrid,1\n", encoding="utf-8")
+    grafo = Grafo(
+        jobs={
+            "a": job_falso("a", consume=(origen,), produce=(intermedio,)),
+            "b": job_falso("b", consume=(intermedio,)),
+        }
+    )
+
+    assert revisar(grafo, Config(), jobs=["b"]) == []
+    assert len(revisar(grafo, Config(), jobs=["a"])) == 1
+
+
+def test_el_plan_usa_las_rutas_de_la_cli(tmp_path):
+    entrada = tmp_path / "otra.csv"
+    entrada.write_text("ciudad,habitantes\nmadrid,1\n", encoding="utf-8")
+    grafo = discover_jobs()
+
+    problemas = revisar(grafo, Config(), ["ciudades"], str(tmp_path / "no-existe.csv"))
+    plan = render_plan(grafo, Config(), ["ciudades"], [], str(entrada), "/tmp/fuera")
+
+    # Revisa la ruta que se leeria, no la del catalogo.
+    assert len(problemas) == 1
+    assert "no-existe.csv" in problemas[0].mensaje
+    assert str(entrada) in plan
+    assert "/tmp/fuera" in plan
+
+
+def test_una_entrada_con_comodines_que_casan_no_se_da_por_inexistente(tmp_path):
+    # La ejecucion la acepta porque casa con ficheros: el dry-run tambien.
+    (tmp_path / "datos").mkdir()
+    (tmp_path / "datos" / "a.csv").write_text("ciudad,habitantes\nmadrid,1\n", encoding="utf-8")
+    entrada = Dataset("entrada", str(tmp_path / "datos" / "*.csv"), ESQUEMA)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
+
+    assert revisar_entradas(grafo, Config()) == []
+
+
+def test_detecta_el_mismo_dataset_con_dos_formatos():
+    csv = Dataset("c", "data/c", ESQUEMA)
+    parquet = replace(csv, formato="parquet")
+    grafo = Grafo(
+        jobs={"a": job_falso("a", produce=(parquet,)), "b": job_falso("b", consume=(csv,))}
+    )
+
+    problemas = revisar_esquemas(grafo)
+
+    assert len(problemas) == 1
+    assert "formatos distintos" in problemas[0].mensaje
+
+
+def test_detecta_un_job_que_escribe_donde_lee(tmp_path):
+    grafo = discover_jobs()
+    directorio = str(tmp_path)
+
+    problemas = revisar(grafo, Config(raiz=str(REPO)), ["ciudades"], directorio, directorio)
+
+    assert any("la entrada se perderia" in p.mensaje for p in problemas)
