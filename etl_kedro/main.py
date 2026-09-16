@@ -6,7 +6,6 @@ Uso (la clave por defecto es `ciudad`, la del dataset de ciudades):
 """
 
 import argparse
-import inspect
 import logging
 import sys
 from collections.abc import Sequence
@@ -19,12 +18,17 @@ from etl_kedro.core.datasets import EntradaNoEncontradaError, check_input_exists
 from etl_kedro.core.logging_conf import VALID_LOG_LEVELS, setup_logging
 from etl_kedro.core.quality import QualityCheckError
 from etl_kedro.core.session import BackendError, spark_session
-from etl_kedro.dryrun import entradas_de_la_ejecucion, render_plan, revisar, revisar_solapes
+from etl_kedro.dryrun import (
+    entradas_de_la_ejecucion,
+    render_plan,
+    revisar,
+    revisar_clave,
+    revisar_solapes,
+)
 from etl_kedro.graph import Grafo, GrafoError, discover_jobs, load_job, nombres_de_jobs
 
 logger = logging.getLogger("etl_kedro.main")
 
-WRITE_MODES = ("overwrite", "append")
 JOB_POR_DEFECTO = "ciudades"
 
 # Codigos de salida del proceso.
@@ -59,7 +63,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # debe cargar los otros 149.
     parser.add_argument(
         "--job",
-        default=JOB_POR_DEFECTO,
+        # Sin valor por defecto aqui: asi se sabe si se ha pasado, y `--all
+        # --job x` se puede rechazar en vez de ignorar `--job` en silencio.
         choices=nombres_de_jobs(),
         help=f"Job a ejecutar (por defecto: {JOB_POR_DEFECTO})",
     )
@@ -78,12 +83,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--input", help="Sobrescribe la ruta de entrada del job")
     parser.add_argument("--output", help="Sobrescribe la ruta de salida del job")
     parser.add_argument(
-        "--mode",
-        default="overwrite",
-        choices=WRITE_MODES,
-        help="Modo de escritura (por defecto: overwrite)",
-    )
-    parser.add_argument(
         "--key-col",
         help="Columna clave; por defecto la declarada por el job",
     )
@@ -95,6 +94,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
 
+    if args.all and args.job:
+        parser.error("--all lanza todos los jobs: no admite --job")
+    args.job = args.job or JOB_POR_DEFECTO
     if args.all and (args.input or args.output):
         parser.error("--all usa las rutas declaradas: no admite --input ni --output")
     # Por lo mismo que las rutas: la clave es de cada job. En `ciudades` es la
@@ -102,10 +104,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # es su salida: una sola clave para toda la cadena rompe al menos uno.
     if args.all and args.key_col:
         parser.error("--all usa la clave de cada job: no admite --key-col")
-    # En la cadena, append acumularia tambien los datasets intermedios: el job
-    # siguiente leeria todas las ejecuciones anteriores y las volveria a sumar.
-    if args.all and args.mode == "append":
-        parser.error("--all reescribe la cadena entera: no admite --mode append")
     return args
 
 
@@ -125,7 +123,7 @@ def ejecutar_job(
     `--input`/`--output`, asi que en ese caso no hay rutas que pasar.
     """
     modulo = load_job(nombre).modulo
-    opciones: dict[str, object] = {"mode": args.mode, "config": config}
+    opciones: dict[str, object] = {"config": config}
     if args.key_col:
         opciones["key_col"] = args.key_col
     if args.input:
@@ -153,30 +151,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             grafo = Grafo(jobs={args.job: load_job(args.job)})
             a_ejecutar = [args.job]
 
-        # Solo los jobs que la usan admiten clave. En `por_ccaa` la columna
-        # agrupada es su salida, y otra no cumpliria nunca el esquema: se
-        # rechaza aqui y no despues de que Spark haya hecho todo el trabajo.
-        if args.key_col:
-            for nombre in a_ejecutar:
-                if "key_col" not in inspect.signature(grafo.jobs[nombre].modulo.run).parameters:
-                    raise ConfigError(f"el job {nombre!r} no admite --key-col")
-
         if args.dry_run:
-            problemas = revisar(grafo, config, a_ejecutar, args.input, args.output)
+            problemas = revisar(grafo, config, a_ejecutar, args.input, args.output, args.key_col)
             print(render_plan(grafo, config, a_ejecutar, problemas, args.input, args.output))
             return EXIT_DRY_RUN if problemas else EXIT_OK
-
-        solapes = revisar_solapes(grafo, config, a_ejecutar, args.input, args.output)
-        if solapes:
-            raise ConfigError("; ".join(f"[{p.donde}] {p.mensaje}" for p in solapes))
 
         logger.info("ETL iniciada: jobs=%s", ", ".join(a_ejecutar))
         # Antes de la sesion: no tiene sentido arrancar Spark para descubrir que
         # una entrada no esta. Se comprueban todas las de esta ejecucion, las de
         # `--input` y las del catalogo, y no las que produce un job anterior de
-        # la misma cadena, que aun no existen.
+        # la misma cadena, que aun no existen. Va antes que los solapes: una
+        # entrada que no existe es el error que hay que contar, no un solape
+        # calculado sobre ella.
         for _, ruta in entradas_de_la_ejecucion(grafo, config, a_ejecutar, args.input):
             check_input_exists(ruta)
+
+        # Lo que haria fallar la ejecucion por como se ha lanzado, y no por el
+        # dato, se corta antes de arrancar Spark: que un job escriba donde lee,
+        # o una `--key-col` que el job no admite (en `por_ccaa` la columna
+        # agrupada es su salida) o que no existe en lo que lee.
+        problemas = revisar_solapes(grafo, config, a_ejecutar, args.input, args.output)
+        if args.key_col:
+            problemas += revisar_clave(grafo, a_ejecutar, args.key_col)
+        if problemas:
+            raise ConfigError("; ".join(f"[{p.donde}] {p.mensaje}" for p in problemas))
         with spark_session() as spark:
             for nombre in a_ejecutar:
                 ejecutar_job(spark, nombre, args, config)

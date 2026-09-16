@@ -27,7 +27,6 @@ def run(
     spark: SparkSession,
     input_path: str | None = None,
     output_path: str | None = None,
-    mode: str = "overwrite",
     config: Config | None = None,
 ) -> ETLPipeline:
     """Ejecuta el job y devuelve el pipeline resultante."""
@@ -46,6 +45,6 @@ def run(
     logger.info("== aggregate == por %r", CLAVE)
     pipeline.transform(lambda df: transform.agregar_por_ccaa(df, CLAVE), name="agregar_por_ccaa")
 
-    logger.info("== write == %s (mode=%s)", destino, mode)
-    pipeline.write_dataset(POBLACION_POR_CCAA, config, path=output_path, mode=mode)
+    logger.info("== write == %s", destino)
+    pipeline.write_dataset(POBLACION_POR_CCAA, config, path=output_path)
     return pipeline

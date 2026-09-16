@@ -11,14 +11,15 @@ La cabecera de un CSV se lee con Python, sin motor: es instantaneo y caza el
 fallo mas comun, que el fichero de origen haya cambiado de columnas.
 """
 
+import inspect
 from dataclasses import dataclass
-from pathlib import Path
 
 from etl_kedro.core.config import Config
 from etl_kedro.core.datasets import (
     Dataset,
+    EntradaNoEncontradaError,
     cabecera_csv,
-    formato_efectivo,
+    check_input_exists,
     problema_de_cabecera,
     problema_de_formato,
     rutas_solapadas,
@@ -117,32 +118,31 @@ def revisar_entradas(
     problemas = []
     for dataset, ruta in entradas_de_la_ejecucion(grafo, config, jobs, input_path):
         nombre = dataset.nombre
-        if not se_comprueba_en_local(ruta):
-            continue  # remoto o con comodines: lo resuelve el motor al leer
-        if not Path(ruta).exists():
+        # La misma regla que la ejecucion: un comodin que no casa con nada es
+        # una entrada que no existe; un URI no se puede mirar en seco.
+        try:
+            check_input_exists(ruta)
+        except EntradaNoEncontradaError:
             problemas.append(Problema(nombre, f"no existe la entrada: {ruta}"))
             continue
-        formato = formato_efectivo(dataset, config, sobrescrita=input_path is not None)
-        problemas.extend(_revisar_cabecera(nombre, dataset, ruta, formato))
+        if not se_comprueba_en_local(ruta):
+            continue
+        problemas.extend(_revisar_cabecera(nombre, dataset, ruta))
     return problemas
 
 
-def _revisar_cabecera(nombre: str, dataset: Dataset, ruta: str, formato: str) -> list[Problema]:
+def _revisar_cabecera(nombre: str, dataset: Dataset, ruta: str) -> list[Problema]:
     """Compara la cabecera del CSV con las columnas del esquema declarado.
 
     Es la misma comprobacion que hace `ETLPipeline.read_dataset` al leer: aqui
     se lista como problema del plan y alli corta la ejecucion. Una sola
     implementacion, para que el dry-run no pueda dar por bueno lo que luego
     falla al ejecutar.
-
-    `formato` es el que usara la ejecucion, no el declarado: con
-    `ETL_OUTPUT_FORMAT=parquet` los datasets de la cadena se leen como parquet,
-    que no tiene cabecera que contrastar.
     """
-    problema_formato = problema_de_formato(ruta, formato)
+    problema_formato = problema_de_formato(ruta, dataset.formato)
     if problema_formato:
         return [Problema(nombre, problema_formato)]
-    if dataset.esquema is None or formato != "csv":
+    if dataset.esquema is None or dataset.formato != "csv":
         return []
     cabecera = cabecera_csv(ruta)
     if cabecera is None:
@@ -163,7 +163,7 @@ def revisar_solapes(
     Spark lee en diferido: con `overwrite` la escritura vacia el destino antes
     de que se lea el origen. Si coinciden, o uno esta dentro del otro, en Sail
     la ejecucion falla con la entrada ya borrada y en PySpark la sustituye en
-    silencio por la salida. Con `append` tampoco vale: se leeria a si misma.
+    silencio por la salida.
     """
     problemas = []
     for nombre in list(grafo.jobs) if jobs is None else jobs:
@@ -183,12 +183,37 @@ def revisar_solapes(
     return problemas
 
 
+def revisar_clave(grafo: Grafo, jobs: list[str], key_col: str) -> list[Problema]:
+    """La `--key-col` tiene que existir en lo que lee cada job que la usa.
+
+    Sin esto el dry-run daba por bueno un plan que la ejecucion corta con un
+    fallo de calidad nada mas leer.
+    """
+    problemas = []
+    for nombre in jobs:
+        job = grafo.jobs[nombre]
+        if "key_col" not in inspect.signature(job.modulo.run).parameters:
+            problemas.append(Problema(nombre, "no admite --key-col"))
+            continue
+        for dataset in job.consume:
+            if dataset.esquema is not None and key_col not in dataset.esquema.fieldNames():
+                problemas.append(
+                    Problema(
+                        nombre,
+                        f"--key-col {key_col!r} no es una columna de {dataset.nombre}: "
+                        f"{dataset.esquema.fieldNames()}",
+                    )
+                )
+    return problemas
+
+
 def revisar(
     grafo: Grafo,
     config: Config,
     jobs: list[str] | None = None,
     input_path: str | None = None,
     output_path: str | None = None,
+    key_col: str | None = None,
 ) -> list[Problema]:
     """Todas las comprobaciones en seco.
 
@@ -205,6 +230,8 @@ def revisar(
     problemas.extend(revisar_esquemas(grafo))
     problemas.extend(revisar_solapes(grafo, config, jobs, input_path, output_path))
     problemas.extend(revisar_entradas(grafo, config, jobs, input_path))
+    if key_col:
+        problemas.extend(revisar_clave(grafo, list(grafo.jobs) if jobs is None else jobs, key_col))
     return problemas
 
 

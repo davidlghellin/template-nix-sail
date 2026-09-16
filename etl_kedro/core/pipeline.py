@@ -6,17 +6,19 @@ from collections.abc import Callable
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
 from pyspark.sql.types import StructType
 
 from etl_kedro.core.config import Config
 from etl_kedro.core.datasets import (
     Dataset,
+    EntradaNoEncontradaError,
     cabecera_csv,
     check_input_exists,
-    formato_efectivo,
     problema_de_cabecera,
     problema_de_formato,
     se_comprueba_en_local,
+    sin_datos,
 )
 from etl_kedro.core.quality import QualityCheckError
 
@@ -100,51 +102,73 @@ class ETLPipeline:
         - **La ruta se comprueba antes de leer.** Sin esto una ruta mal escrita
           se lee como un DataFrame vacio y el fallo aparece luego como "faltan
           columnas requeridas", que manda a depurar el esquema en vez de la ruta.
-        - **El esquema declarado se pasa al lector.** Evita `inferSchema`, que
-          hace doble pasada sobre el fichero y no infiere igual en los dos
-          backends (PySpark da `int` donde Sail da `bigint`).
-        - **La cabecera se contrasta con el esquema antes de leer**, para poder
-          fallar con un `QualityCheckError` que diga que columna sobra o falta.
-          Dejarselo al motor tambien corta, pero con un error de parseo suelto
-          que sale como bug (codigo 1) en vez de como fallo de dato (codigo 2).
-
-        `enforceSchema=False` deja ademas que el motor contraste la cabecera por
-        su cuenta. PySpark lo respeta; Sail lo ignora, asi que es la
-        comprobacion de arriba la que iguala el comportamiento de los dos.
+        - **Las columnas se toman por nombre, no por posicion.** Pasar el
+          esquema al lector de CSV lo aplica por posicion: un fichero con dos
+          columnas cambiadas de sitio saldria cruzado, y `enforceSchema=False`,
+          que en PySpark lo evita, Sail lo ignora. Leyendo la cabecera y
+          seleccionando cada columna declarada por su nombre, el orden del
+          fichero da igual en los dos motores, y vale tambien para comodines y
+          `s3://`, donde no se puede mirar la cabecera antes.
+        - **Faltan o sobran columnas: `QualityCheckError`**, que sale como fallo
+          de dato (codigo 2) y no como un error del motor (codigo 1).
+        - **Los tipos son los declarados.** En CSV cada columna llega como texto
+          y se convierte con `try_cast`: un valor que no encaja queda nulo, como
+          con el lector permisivo de siempre. En parquet los tipos vienen en el
+          fichero y tienen que coincidir.
         """
         ruta = path if path is not None else dataset.resolver(config)
         check_input_exists(ruta)
-        formato = formato_efectivo(dataset, config, sobrescrita=path is not None)
         # Antes de leer, y por tanto antes de escribir nada.
-        problema = problema_de_formato(ruta, formato)
+        problema = problema_de_formato(ruta, dataset.formato)
         if problema:
             raise QualityCheckError(f"[{dataset.nombre}] {problema}")
-        if formato == "parquet":
-            # Parquet lleva su esquema dentro, pero se pasa igual el declarado:
-            # un directorio sin ficheros (lo que deja Sail al escribir un
-            # resultado vacio) se leeria sin columnas y el siguiente check
-            # fallaria por un dato que no esta mal.
-            logger.info("Leyendo parquet de %s", ruta)
-            lector = self.spark.read
-            if dataset.esquema is not None:
-                lector = lector.schema(dataset.esquema)
-            self._df = lector.parquet(ruta)
-            logger.info("Parquet leido con columnas %s", self._df.columns)
+
+        esquema = dataset.esquema
+        if esquema is None:
+            if dataset.formato == "parquet":
+                self._df = self.spark.read.parquet(ruta)
+                return self
+            return self.read_csv(ruta)
+
+        if sin_datos(ruta):
+            logger.info("%s no tiene datos: se lee vacio con el esquema declarado", ruta)
+            self._df = self.spark.createDataFrame([], esquema)
             return self
 
-        opciones: dict[str, Any] = {}
-        if dataset.esquema is not None:
+        logger.info("Leyendo %s de %s", dataset.formato, ruta)
+        if dataset.formato == "csv":
+            # Donde se puede, la cabecera se mira con Python antes que con el
+            # motor: una columna repetida la colapsa Sail (y luego falla al
+            # leer) y la renombra PySpark, asi que las columnas que devuelven no
+            # sirven para verla. Es la misma comprobacion que hace el dry-run.
+            # Con comodines o `s3://` no hay fichero que abrir: decide el motor.
             cabecera = cabecera_csv(ruta)
             if cabecera is not None:
-                problema = problema_de_cabecera(dataset.esquema, cabecera)
+                problema = problema_de_cabecera(esquema, cabecera)
                 if problema:
                     raise QualityCheckError(f"[{dataset.nombre}] {problema}")
-            opciones = {
-                "schema": dataset.esquema,
-                "inferSchema": False,
-                "enforceSchema": False,
-            }
-        return self.read_csv(ruta, **opciones)
+        if dataset.formato == "parquet":
+            crudo = self.spark.read.parquet(ruta)
+        else:
+            crudo = self.spark.read.csv(ruta, header=True, inferSchema=False)
+        if not crudo.columns and not se_comprueba_en_local(ruta):
+            # Sin columnas y sin poder mirar la ruta (un `s3://`): o no existe o
+            # no tiene nada. No se da por un dataset vacio, que en un job que
+            # sobrescribe vaciaria su salida por una ruta mal escrita. Uno local
+            # sin cabecera (0 bytes) cae al contraste de columnas.
+            raise EntradaNoEncontradaError(f"No se ha leido nada de la entrada: {ruta}")
+
+        problema = problema_de_cabecera(esquema, crudo.columns)
+        if dataset.formato == "parquet":
+            problema = problema or _tipos_distintos(esquema, crudo.schema)
+        if problema:
+            raise QualityCheckError(f"[{dataset.nombre}] {problema}")
+
+        self._df = crudo.select(
+            *[F.col(campo.name).try_cast(campo.dataType).alias(campo.name) for campo in esquema]
+        )
+        logger.info("Leido con columnas %s", self._df.columns)
+        return self
 
     def transform(self, transform_func: TransformFunc, name: str | None = None) -> "ETLPipeline":
         """Aplica `transform_func` al DataFrame actual y guarda el resultado.
@@ -175,14 +199,12 @@ class ETLPipeline:
         """Escribe en la ruta y el formato que declara el dataset.
 
         Simetrico de `read_dataset`: el catalogo manda tambien al escribir, en
-        vez de que cada job elija formato por su cuenta. El entorno puede
-        forzarlo (`ETL_OUTPUT_FORMAT`), que es como el test e2e obtiene parquet
-        de una cadena que normalmente escribe CSV.
+        vez de que cada job elija formato por su cuenta.
         """
         ruta = path if path is not None else dataset.resolver(config)
         # El esquema declarado es el contrato del dataset tambien para quien lo
-        # lee despues, que lo aplicara por posicion. Se contrasta antes de
-        # escribir para que una salida que no lo cumple no llegue al disco:
+        # lee despues. Se contrasta antes de escribir para que una salida que no
+        # lo cumple no llegue al disco:
         # p.ej. un agregado por otra clave que deja `provincia` donde el
         # catalogo promete `comunidad_autonoma`.
         if dataset.esquema is not None:
@@ -193,8 +215,7 @@ class ETLPipeline:
                 raise QualityCheckError(
                     f"[{dataset.nombre}] la salida no cumple el esquema declarado: {problema}"
                 )
-        formato = formato_efectivo(dataset, config, sobrescrita=path is not None)
-        if formato == "parquet":
+        if dataset.formato == "parquet":
             logger.info("Escribiendo parquet en %s (mode=%s)", ruta, mode)
             self.df.write.parquet(ruta, mode=mode)
             logger.info("Escritura completada en %s", ruta)

@@ -24,6 +24,17 @@ def validar(df: DataFrame, key_col: str) -> DataFrame:
     return check_non_null_key(df, key_col)
 
 
+COLUMNA_HABITANTES = "habitantes"
+
+
 def deduplicar(df: DataFrame, key_col: str) -> DataFrame:
-    """Deja una fila por clave, conservando la primera aparicion."""
-    return deduplicate_by_key(df, key_col, keep="first")
+    """Deja una fila por clave: la de mas habitantes.
+
+    Es una regla de negocio y no "la primera del fichero" a proposito: Spark no
+    garantiza el orden de lectura, y con un CSV grande PySpark se quedaba con la
+    primera fila repetida y Sail con la ultima. A igualdad de habitantes
+    desempatan el resto de columnas, para que ninguna eleccion quede al azar.
+    """
+    resto = sorted(c for c in df.columns if c not in (key_col, COLUMNA_HABITANTES))
+    orden = [COLUMNA_HABITANTES, *resto] if COLUMNA_HABITANTES in df.columns else resto
+    return deduplicate_by_key(df, key_col, keep="last", order_col=orden)

@@ -67,20 +67,37 @@ def test_run_lee_deduplica_y_escribe(spark, csv_con_duplicados, tmp_path):
     assert sorted(fila["ciudad"] for fila in filas) == ["barcelona", "madrid", "valencia"]
 
 
-def test_run_conserva_la_primera_aparicion(spark, csv_con_duplicados, tmp_path):
-    job.run(spark, csv_con_duplicados, str(tmp_path / "salida"))
+@pytest.mark.parametrize("mayor_primero", [True, False], ids=["mayor-primero", "mayor-despues"])
+def test_run_conserva_la_fila_con_mas_habitantes(spark, escribir_ciudades, tmp_path, mayor_primero):
+    """La regla no depende del orden del fichero, que Spark no garantiza.
 
-    filas = {f["ciudad"]: f["habitantes"] for f in leer_csv_escrito(tmp_path / "salida")}
-    assert filas["madrid"] == "3200000"  # no el 999 de la fila duplicada
+    Con un CSV grande, "la primera aparicion" era la primera fila en PySpark y
+    la ultima en Sail. Se prueban los dos ordenes: los dos dan lo mismo.
+    """
+    filas = [
+        ("madrid", 3200000, "Madrid", "Comunidad de Madrid", 604.3),
+        ("madrid", 999, "Madrid", "Comunidad de Madrid", 604.3),
+    ]
+    entrada = escribir_ciudades(filas if mayor_primero else filas[::-1])
+
+    job.run(spark, entrada, str(tmp_path / "salida"))
+
+    escritas = {f["ciudad"]: f["habitantes"] for f in leer_csv_escrito(tmp_path / "salida")}
+    assert escritas["madrid"] == "3200000"
 
 
-def test_run_mode_append_acumula(spark, csv_con_duplicados, tmp_path):
-    salida = str(tmp_path / "salida")
+def test_run_desempata_sin_depender_del_orden(spark, escribir_ciudades, tmp_path):
+    # Mismos habitantes y distinto dato: decide el resto de columnas, no el azar.
+    a = ("madrid", 100, "A", "Comunidad de Madrid", 1.0)
+    b = ("madrid", 100, "B", "Comunidad de Madrid", 1.0)
+    resultados = set()
+    for orden in ([a, b], [b, a]):
+        entrada = escribir_ciudades(orden, nombre=f"desempate-{orden[0][2]}.csv")
+        salida = tmp_path / f"salida-{orden[0][2]}"
+        job.run(spark, entrada, str(salida))
+        resultados.add(leer_csv_escrito(salida)[0]["provincia"])
 
-    job.run(spark, csv_con_duplicados, salida)
-    job.run(spark, csv_con_duplicados, salida, mode="append")
-
-    assert len(leer_csv_escrito(salida)) == 6
+    assert resultados == {"B"}
 
 
 def test_run_usa_la_clave_del_dominio_por_defecto(spark, csv_con_duplicados, tmp_path):

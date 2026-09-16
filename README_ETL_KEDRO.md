@@ -17,10 +17,12 @@ etl_kedro/
 ├── dryrun.py                # revisa el plan en seco, sin arrancar Spark
 └── jobs/
     ├── ciudades/            # un flujo = una carpeta autocontenida
+    │   ├── __init__.py      # obligatorio: sin el el job no se empaqueta
     │   ├── datasets.py      # sus datasets, con esquema (entrada Y salida)
     │   ├── transform.py     # dominio puro: DataFrame -> DataFrame
     │   └── job.py           # CONSUME / PRODUCE + orquestacion
     └── por_ccaa/            # consume la salida de `ciudades`
+        ├── __init__.py
         ├── datasets.py
         ├── transform.py
         └── job.py
@@ -123,8 +125,8 @@ python -m etl_kedro.main --job ciudades --input resources/ciudades_espana.csv --
 el dataset del job. Con `--all` no se admiten, porque una sola pareja de rutas
 no tiene sentido para una cadena de N jobs.
 
-Con una `--key-col` que no exista, la ETL falla en el check de calidad, sale con
-codigo 2 y no escribe nada.
+Una `--key-col` que no exista en lo que lee el job se rechaza antes de arrancar
+Spark, con codigo 5, igual que el resto de argumentos invalidos.
 
 ### Ensayo en seco (`--dry-run`)
 
@@ -154,10 +156,11 @@ Sin problemas: esquemas coherentes y entradas presentes.
 Comprueba que el grafo se pueda construir (sin ciclos, sin un dataset con dos
 productores, sin jobs que olviden `CONSUME`/`PRODUCE`), que nadie declare el
 mismo dataset con dos rutas, dos esquemas o dos formatos, que ningun job escriba
-donde lee, que existan las entradas de lo que se va a lanzar (con `--job`, las
-de ese job y en la ruta de `--input` si se pasa) y que la cabecera real del CSV
-traiga exactamente las columnas del `StructType` declarado, ni una mas. La
-cabecera se lee con el `csv` de Python, sin motor. Si algo falla lo lista y sale
+donde lee, que la `--key-col` exista en lo que lee el job, que existan las
+entradas de lo que se va a lanzar (con `--job`, las de ese job y en la ruta de
+`--input` si se pasa) y que la cabecera real del CSV traiga las columnas del
+`StructType` declarado, ni una mas ni una menos; el orden da igual. La cabecera
+se lee con el `csv` de Python, sin motor. Si algo falla lo lista y sale
 con codigo 6:
 
 ```
@@ -172,14 +175,14 @@ Los `s3://` no se miran en seco: se dejan pasar en vez de dar un falso error.
 
 ### Entornos y rutas
 
-La configuracion son variables de entorno, no ficheros. Una variable definida
-pero vacia cuenta como no definida:
+La configuracion son variables de entorno, no ficheros. Un `ETL_DATA_ROOT`
+definido pero vacio cuenta como no definido; un `ETL_ENV` vacio es un error,
+para que un contenedor mal configurado no caiga en `dev` sin avisar:
 
-| Variable            | Por defecto | Descripcion                                                  |
-| ------------------- | ----------- | ------------------------------------------------------------ |
-| `ETL_ENV`           | `dev`       | `dev`, `pre` o `pro`                                         |
-| `ETL_DATA_ROOT`     | `.` en dev  | Raiz de la que cuelgan las rutas relativas                   |
-| `ETL_OUTPUT_FORMAT` | el de cada dataset | `csv` o `parquet`, para los datasets que produce la cadena |
+| Variable         | Por defecto | Descripcion                                            |
+| ---------------- | ----------- | ------------------------------------------------------ |
+| `ETL_ENV`        | `dev`       | `dev`, `pre` o `pro`                                   |
+| `ETL_DATA_ROOT`  | `.` en dev  | Raiz de la que cuelgan las rutas relativas             |
 
 Los datasets declaran ruta **relativa** y `Config.resolver` le antepone la raiz,
 asi que el mismo codigo escribe en local o en el bucket sin tocar nada:
@@ -214,7 +217,6 @@ del paquete. Asi que el comando se lanza desde la raiz del repo, o con
 | `--job`       | `ciudades`  | Job a ejecutar; los nombres salen de las carpetas de `jobs/`   |
 | `--input`     | del dataset | Sobrescribe la ruta de entrada; incompatible con `--all`       |
 | `--output`    | del dataset | Sobrescribe la ruta de salida; incompatible con `--all`        |
-| `--mode`      | `overwrite` | `overwrite` o `append`. `append` no con `--all`                |
 | `--key-col`   | del job     | Clave de `ciudades`: sin nulos y usada para deduplicar. No con `--all` ni en `por_ccaa`, cuya clave es su salida |
 | `--log-level` | `INFO`      | `DEBUG`, `INFO`, `WARNING` o `ERROR`                           |
 
@@ -246,13 +248,16 @@ El nombre del logger dice de que capa sale cada linea: `etl_kedro.main` la CLI,
 | INFO  | etl_kedro.core.session      | Iniciando sesion de Spark (backend=pysail)
 | INFO  | etl_kedro.main              | --- job ciudades ---
 | INFO  | etl_kedro.jobs.ciudades.job | == read == resources/ciudades_espana.csv
-| INFO  | etl_kedro.core.pipeline     | CSV leido con columnas ['ciudad', 'habitantes', 'provincia', 'comunidad_autonoma', 'superficie_km2']
+| INFO  | etl_kedro.core.pipeline     | Leyendo csv de resources/ciudades_espana.csv
+| INFO  | etl_kedro.core.pipeline     | Leido con columnas ['ciudad', 'habitantes', 'provincia', 'comunidad_autonoma', 'superficie_km2']
 | INFO  | etl_kedro.jobs.ciudades.job | == validate == clave 'ciudad'
 | INFO  | etl_kedro.core.pipeline     | Aplicando transformacion validar
 | INFO  | etl_kedro.jobs.ciudades.job | == dedup == por 'ciudad'
 | INFO  | etl_kedro.core.pipeline     | Aplicando transformacion deduplicar
 | DEBUG | etl_kedro.jobs.ciudades.job | Deduplicado: 100 filas -> 100 filas (0 duplicados eliminados)
-| INFO  | etl_kedro.jobs.ciudades.job | == write == /tmp/salida (mode=overwrite)
+| INFO  | etl_kedro.jobs.ciudades.job | == write == /tmp/salida
+| INFO  | etl_kedro.core.pipeline     | Escribiendo CSV en /tmp/salida (mode=overwrite, opciones={'header': True})
+| INFO  | etl_kedro.core.pipeline     | Escritura completada en /tmp/salida
 | INFO  | etl_kedro.main              | ETL finalizada correctamente
 ```
 
@@ -265,7 +270,7 @@ Codigos de salida:
 | `2`    | Fallo de un check de calidad (`QualityCheckError`)             |
 | `3`    | Backend invalido o sin Java (`BackendError`)                   |
 | `4`    | No existe una entrada, de `--input` o del catalogo             |
-| `5`    | Configuracion invalida: entorno, grafo de jobs, o un job que escribiria donde lee |
+| `5`    | Configuracion invalida: argumentos, entorno, grafo de jobs, o un job que escribiria donde lee |
 | `6`    | El `--dry-run` ha encontrado problemas                         |
 
 Los fallos de dato y de entorno salen como una linea de `ERROR` con el motivo,
@@ -317,26 +322,24 @@ que hacen valer lo que el dataset declara:
 
 ```python
 pipeline.read_dataset(CIUDADES_RAW, config)
-pipeline.write_dataset(CIUDADES_DEDUP, config, mode="overwrite")
+pipeline.write_dataset(CIUDADES_DEDUP, config)
 ```
 
-Al leer: **comprueba la ruta** antes de tocar el motor, **aplica el `StructType`
-declarado** en vez de inferirlo, y **contrasta la cabecera** con el esquema. Si
-falta una columna o estan en otro orden corta con `QualityCheckError` (codigo 2)
-diciendo cual, en vez de dejar que salte un error de parseo del motor, que
-saldria como bug (codigo 1).
+Al leer: **comprueba la ruta** antes de tocar el motor, **toma cada columna
+declarada por su nombre** y la convierte al tipo del `StructType`, en vez de
+inferirlo. Si falta o sobra una columna corta con `QualityCheckError` (codigo 2)
+diciendo cual, en vez de dejar que salte un error del motor, que saldria como
+bug (codigo 1). Un valor que no encaja en su tipo queda nulo.
 
-Lo del orden no es teorico: un esquema explicito se aplica **por posicion**. Con
-`enforceSchema=False` PySpark contrasta la cabecera y corta, pero **Sail ignora
-esa opcion** y devolveria las columnas cruzadas sin un solo error. Por eso la
-comprobacion se hace aqui, y no se delega en el motor.
+Lo de leer por nombre no es un detalle: pasar el esquema al lector de CSV lo
+aplica **por posicion**. `enforceSchema=False` hace que PySpark contraste la
+cabecera, pero **Sail ignora esa opcion**, y un fichero con dos columnas
+cambiadas de sitio saldria cruzado sin un solo error. Por nombre, el orden del
+fichero da igual en los dos motores, y vale tambien con comodines y `s3://`,
+donde no se puede mirar la cabecera antes de leer.
 
-Al escribir manda el `formato` del dataset. `ETL_OUTPUT_FORMAT` lo sobrescribe,
-al leer y al escribir, para los datasets que produce algun job de la cadena y en
-su ruta del catalogo: es como el test e2e obtiene parquet de unos jobs que
-normalmente escriben CSV. No toca las entradas externas, que las escribio otro,
-ni una ruta pasada con `--input`/`--output`, que se trata con su formato
-declarado.
+Al escribir manda el `formato` del dataset (`csv` por defecto, o `parquet`), y
+la salida se contrasta con el esquema declarado antes de llegar al disco.
 
 ### Checks de calidad
 
@@ -382,9 +385,9 @@ corren en centesimas y sirven de verificacion barata de la cadena.
 que lo escrito en disco tiene exactamente el `StructType` que declara su dataset,
 despues de pasar por lectura, transformaciones y escritura reales.
 
-Escribe en parquet a proposito. Un CSV convierte todo a texto, asi que un
-`bigint` y un `int` salen identicos y el test daria verde sin comprobar nada de
-tipos; parquet guarda el esquema junto a los datos.
+Declara en parquet los datasets de la cadena a proposito. Un CSV convierte todo
+a texto, asi que un `bigint` y un `int` salen identicos y el test daria verde
+sin comprobar nada de tipos; parquet guarda el esquema junto a los datos.
 
 Al comprobar contra lo **declarado** y no contra otro motor, basta con un backend
 por ejecucion: si los dos cumplen el contrato, coinciden entre si. Por eso corre

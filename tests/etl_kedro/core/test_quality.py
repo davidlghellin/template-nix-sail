@@ -216,3 +216,14 @@ def test_deduplicate_con_order_col_ignora_los_nulos(spark, keep, esperado):
     fila = deduplicate_by_key(df, "clave", keep, order_col="orden").collect()[0]
 
     assert fila["dato"] == esperado
+
+
+def test_deduplicate_con_varias_columnas_de_orden_desempata(spark):
+    df = spark.createDataFrame(
+        [("x", 5, "a"), ("x", 5, "c"), ("x", 3, "z")],
+        "clave string, principal int, desempate string",
+    )
+
+    fila = deduplicate_by_key(df, "clave", "last", order_col=["principal", "desempate"]).collect()
+
+    assert (fila[0]["principal"], fila[0]["desempate"]) == (5, "c")

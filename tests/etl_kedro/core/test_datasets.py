@@ -24,10 +24,16 @@ def test_check_input_exists_falla_si_no_existe(tmp_path):
         check_input_exists(str(tmp_path / "no-existe.csv"))
 
 
-@pytest.mark.parametrize("path", ["s3://bucket/datos.csv", "datos/*.csv", "datos/part-?.csv"])
-def test_check_input_exists_ignora_uris_y_comodines(path):
-    # Los resuelve el motor: comprobarlos en local daria un falso negativo.
-    check_input_exists(path)  # no lanza
+def test_check_input_exists_ignora_uris():
+    # Un `s3://` lo resuelve el motor: comprobarlo en local daria un falso negativo.
+    check_input_exists("s3://bucket/datos.csv")  # no lanza
+
+
+@pytest.mark.parametrize("patron", ["*.csv", "part-?.csv"])
+def test_check_input_exists_acepta_un_comodin_que_casa(tmp_path, patron):
+    (tmp_path / "part-0.csv").write_text("a\n", encoding="utf-8")
+
+    check_input_exists(str(tmp_path / patron))  # no lanza
 
 
 def test_dataset_guarda_nombre_ruta_y_esquema(csv_existente):
@@ -149,3 +155,60 @@ def test_problema_de_formato_detecta_partes_del_otro_formato(tmp_path):
     assert problema_de_formato(str(parquet), "parquet") is None
     assert problema_de_formato(str(csv), "csv") is None
     assert problema_de_formato(str(tmp_path / "vacio-no-existe"), "csv") is None
+
+
+def test_rutas_solapadas_con_un_comodin_en_un_directorio_intermedio(tmp_path):
+    # `*/in.csv` casa con `out/in.csv`: escribir en `out` borraria esa entrada.
+    from etl_kedro.core.datasets import rutas_solapadas
+
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "in.csv").write_text("a\n", encoding="utf-8")
+    (tmp_path / "otra").mkdir()
+
+    assert rutas_solapadas(str(tmp_path / "*" / "in.csv"), str(tmp_path / "out"))
+    assert not rutas_solapadas(str(tmp_path / "out" / "*.csv"), str(tmp_path / "otra"))
+
+
+def test_problema_de_cabecera_detecta_columnas_repetidas():
+    from pyspark.sql.types import StringType, StructField, StructType
+
+    from etl_kedro.core.datasets import problema_de_cabecera
+
+    esquema = StructType([StructField("a", StringType()), StructField("b", StringType())])
+
+    assert "repite" in (problema_de_cabecera(esquema, ["a", "b", "a"]) or "")
+
+
+def test_cabecera_csv_no_lee_un_fichero_comprimido(tmp_path):
+    # El motor lo descomprime; aqui se leerian bytes de gzip como cabecera.
+    import gzip
+
+    from etl_kedro.core.datasets import cabecera_csv
+
+    path = tmp_path / "datos.csv.gz"
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        f.write("ciudad,habitantes\nmadrid,1\n")
+
+    assert cabecera_csv(str(path)) is None
+
+
+def test_check_input_exists_un_comodin_sin_coincidencias_no_existe(tmp_path):
+    # Antes pasaba: se leia "nada" y un job que sobrescribe vaciaba su salida.
+    from etl_kedro.core.datasets import EntradaNoEncontradaError
+
+    (tmp_path / "ciudades.csv").write_text("a\n", encoding="utf-8")
+
+    check_input_exists(str(tmp_path / "ciudades*.csv"))  # casa: no lanza
+    with pytest.raises(EntradaNoEncontradaError, match="Ningun fichero"):
+        check_input_exists(str(tmp_path / "ciudadess*.csv"))
+
+
+def test_cabecera_csv_ignora_ficheros_ocultos_y_con_guion_bajo(tmp_path):
+    # Los motores los ignoran; un `._part-0.csv` de macOS se leia como cabecera.
+    from etl_kedro.core.datasets import cabecera_csv
+
+    (tmp_path / "._part-0.csv").write_bytes(b"\x00\x05\x16\x07Mac OS X")
+    (tmp_path / "_tmp.csv").write_text("basura\n", encoding="utf-8")
+    (tmp_path / "part-0.csv").write_text("ciudad,habitantes\nmadrid,1\n", encoding="utf-8")
+
+    assert cabecera_csv(str(tmp_path)) == ["ciudad", "habitantes"]

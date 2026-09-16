@@ -15,12 +15,9 @@ import ntpath
 import os
 from dataclasses import dataclass
 
-FORMATOS = ("csv", "parquet")
-
 ENTORNOS = ("dev", "pre", "pro")
 VAR_ENTORNO = "ETL_ENV"
 VAR_RAIZ = "ETL_DATA_ROOT"
-VAR_FORMATO = "ETL_OUTPUT_FORMAT"
 
 ENTORNO_POR_DEFECTO = "dev"
 RAIZ_EN_DEV = "."
@@ -36,18 +33,10 @@ class Config:
 
     entorno: str = ENTORNO_POR_DEFECTO
     raiz: str = RAIZ_EN_DEV
-    # Sobrescribe el formato que declara cada dataset. `None` es lo normal: cada
-    # uno escribe en el suyo. Se fuerza cuando hace falta un formato que conserve
-    # los tipos, como en el test e2e, que escribe parquet para comprobarlos.
-    formato_salida: str | None = None
-    # A que datasets alcanza esa sobrescritura: los que produce la cadena. Sale
-    # del grafo, no de una lista a mano. Las entradas externas no se tocan, que
-    # las escribio otro y siguen en su formato.
-    datasets_forzados: frozenset[str] = frozenset()
 
     @classmethod
     def desde_entorno(cls) -> "Config":
-        """Lee `ETL_ENV`, `ETL_DATA_ROOT` y `ETL_OUTPUT_FORMAT`, validando."""
+        """Lee `ETL_ENV` y `ETL_DATA_ROOT`, validando."""
         entorno = os.environ.get(VAR_ENTORNO, ENTORNO_POR_DEFECTO)
         if entorno not in ENTORNOS:
             raise ConfigError(
@@ -67,33 +56,7 @@ class Config:
                 )
             raiz = RAIZ_EN_DEV
 
-        # Vacia cuenta como no configurada, igual que la raiz.
-        formato = (os.environ.get(VAR_FORMATO) or "").strip() or None
-        if formato is not None and formato not in FORMATOS:
-            raise ConfigError(
-                f"{VAR_FORMATO} invalido: {formato!r}. Validos: {', '.join(FORMATOS)}"
-            )
-        forzados: frozenset[str] = frozenset()
-        if formato is not None:
-            # A que datasets alcanza: los que produce algun job. Se calcula aqui
-            # y no en la CLI, para que la variable valga igual al lanzar un job
-            # desde codigo o un notebook. Import local: el grafo importa los
-            # jobs, y estos importan esta configuracion.
-            from etl_kedro.graph import discover_jobs
-
-            forzados = frozenset(discover_jobs().productor_de)
-        return cls(entorno=entorno, raiz=raiz, formato_salida=formato, datasets_forzados=forzados)
-
-    def formato_de(self, nombre: str, formato_declarado: str) -> str:
-        """Formato efectivo de un dataset: el forzado por el entorno, o el suyo.
-
-        La sobrescritura vale tanto al leer como al escribir; si no, el job que
-        consume buscaria CSV donde el anterior dejo parquet y la cadena se
-        rompe a mitad.
-        """
-        if self.formato_salida and nombre in self.datasets_forzados:
-            return self.formato_salida
-        return formato_declarado
+        return cls(entorno=entorno, raiz=raiz)
 
     def resolver(self, ruta: str) -> str:
         """Devuelve la ruta absoluta o remota que corresponde a `ruta`.

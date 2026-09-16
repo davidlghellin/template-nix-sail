@@ -28,7 +28,6 @@ def run(
     input_path: str | None = None,
     output_path: str | None = None,
     key_col: str = CLAVE,
-    mode: str = "overwrite",
     config: Config | None = None,
 ) -> ETLPipeline:
     """Ejecuta el job de punta a punta y devuelve el pipeline resultante.
@@ -65,6 +64,6 @@ def run(
             rows_before - rows_after,
         )
 
-    logger.info("== write == %s (mode=%s)", destino, mode)
-    pipeline.write_dataset(CIUDADES_DEDUP, config, path=output_path, mode=mode)
+    logger.info("== write == %s", destino)
+    pipeline.write_dataset(CIUDADES_DEDUP, config, path=output_path)
     return pipeline

@@ -245,19 +245,23 @@ def test_read_dataset_falla_si_falta_una_columna(pipeline, tmp_path):
         pipeline.read_dataset(dataset)
 
 
-def test_read_dataset_falla_si_las_columnas_estan_cambiadas(pipeline, tmp_path):
-    """El caso que Sail no detecta: mismas columnas, otro orden.
+@pytest.mark.parametrize("comodin", [False, True], ids=["fichero", "comodin"])
+def test_read_dataset_lee_por_nombre_aunque_cambie_el_orden(pipeline, tmp_path, comodin):
+    """Mismas columnas, otro orden: cada valor en su columna, en los dos motores.
 
-    Un esquema explicito se aplica por posicion. PySpark corta con
-    `enforceSchema=False`, pero Sail ignora esa opcion y devolveria `ciudad` y
-    `poblacion` intercambiadas sin un solo error.
+    Pasar el esquema al lector lo aplica por posicion, y Sail ignora
+    `enforceSchema=False`: con un comodin o `s3://`, donde no se puede mirar la
+    cabecera antes, devolvia `ciudad` y `poblacion` intercambiadas sin error.
     """
     path = tmp_path / "cambiado.csv"
     path.write_text("id,poblacion,ciudad\n1,3200000,madrid\n", encoding="utf-8")
-    dataset = Dataset(nombre="ciudades", ruta=str(path), esquema=ESQUEMA_CIUDADES)
+    ruta = str(tmp_path / "*.csv") if comodin else str(path)
+    dataset = Dataset(nombre="ciudades", ruta=ruta, esquema=ESQUEMA_CIUDADES)
 
-    with pytest.raises(QualityCheckError, match="otro orden"):
-        pipeline.read_dataset(dataset)
+    pipeline.read_dataset(dataset)
+
+    assert pipeline.df.schema == ESQUEMA_CIUDADES
+    assert [tuple(r) for r in pipeline.df.collect()] == [(1, "madrid", 3200000)]
 
 
 def test_read_dataset_acepta_sobrescribir_la_ruta(pipeline, csv_entrada, tmp_path):
@@ -328,20 +332,6 @@ def test_write_dataset_deja_el_directorio_aunque_no_haya_filas(pipeline, tmp_pat
     assert salida.is_dir()
 
 
-def test_una_ruta_dada_a_mano_se_lee_con_su_formato_declarado(pipeline, tmp_path):
-    # ETL_OUTPUT_FORMAT cambia el formato en la ruta del catalogo, no el de un
-    # CSV que se pasa con --input.
-    path = tmp_path / "in.csv"
-    path.write_text("id,ciudad\n1,madrid\n", encoding="utf-8")
-    esquema = StructType([StructField("id", StringType()), StructField("ciudad", StringType())])
-    dataset = Dataset("entrada", "data/entrada", esquema)
-    forzado = Config(formato_salida="parquet", datasets_forzados=frozenset({"entrada"}))
-
-    pipeline.read_dataset(dataset, forzado, path=str(path))
-
-    assert [tuple(r) for r in pipeline.df.collect()] == [("1", "madrid")]
-
-
 def test_read_dataset_parquet_de_un_directorio_vacio_trae_las_columnas(pipeline, tmp_path):
     # Es lo que deja Sail al escribir un resultado vacio: sin el esquema, el
     # siguiente job leeria un DataFrame sin columnas.
@@ -357,7 +347,7 @@ def test_read_dataset_parquet_de_un_directorio_vacio_trae_las_columnas(pipeline,
 
 
 def test_read_dataset_no_lee_parquet_como_csv(pipeline, tmp_path):
-    # Un dataset que se dejo en parquet y se lee sin ETL_OUTPUT_FORMAT: tiene
+    # Un dataset que se dejo en parquet y ahora se declara en CSV: tiene
     # que cortar como fallo de dato antes de leer, y por tanto antes de escribir.
     esquema = StructType([StructField("id", StringType()), StructField("ciudad", StringType())])
     ruta = tmp_path / "en_parquet"
@@ -365,3 +355,71 @@ def test_read_dataset_no_lee_parquet_como_csv(pipeline, tmp_path):
 
     with pytest.raises(QualityCheckError, match="tiene parquet"):
         pipeline.read_dataset(Dataset("d", str(ruta), esquema))
+
+
+def test_read_dataset_parquet_sin_una_columna_declarada_es_fallo_de_dato(pipeline, tmp_path):
+    # Con el esquema forzado al leer, la columna que falta llegaba como nulos y
+    # la cadena terminaba con 0 y un resultado corrupto.
+    ruta = tmp_path / "viejo"
+    pipeline.spark.createDataFrame(
+        [(1, "madrid", 5)], "id bigint, ciudad string, otra bigint"
+    ).write.parquet(str(ruta))
+    dataset = Dataset("d", str(ruta), ESQUEMA_CIUDADES, formato="parquet")
+
+    with pytest.raises(QualityCheckError, match="poblacion"):
+        pipeline.read_dataset(dataset)
+
+
+def test_read_dataset_parquet_con_otro_tipo_es_fallo_de_dato(pipeline, tmp_path):
+    ruta = tmp_path / "tipos"
+    pipeline.spark.createDataFrame(
+        [(1, "madrid", "3200000")], "id bigint, ciudad string, poblacion string"
+    ).write.parquet(str(ruta))
+    dataset = Dataset("d", str(ruta), ESQUEMA_CIUDADES, formato="parquet")
+
+    with pytest.raises(QualityCheckError, match="poblacion: declarado bigint"):
+        pipeline.read_dataset(dataset)
+
+
+def test_read_dataset_un_valor_que_no_encaja_queda_nulo(pipeline, tmp_path):
+    # Como el lector permisivo de siempre: la fila se conserva y el valor es nulo.
+    path = tmp_path / "raro.csv"
+    path.write_text("id,ciudad,poblacion\n1,madrid,no-es-un-numero\n", encoding="utf-8")
+
+    pipeline.read_dataset(Dataset("d", str(path), ESQUEMA_CIUDADES))
+
+    assert [tuple(r) for r in pipeline.df.collect()] == [(1, "madrid", None)]
+
+
+def test_read_dataset_un_fichero_local_vacio_es_fallo_de_dato(pipeline, tmp_path):
+    # Una exportacion truncada no puede pasar por un dataset vacio valido.
+    path = tmp_path / "vacio.csv"
+    path.touch()
+
+    with pytest.raises(QualityCheckError, match="faltan columnas"):
+        pipeline.read_dataset(Dataset("d", str(path), ESQUEMA_CIUDADES))
+
+
+def test_read_dataset_con_columnas_repetidas_es_fallo_de_dato(pipeline, tmp_path):
+    path = tmp_path / "repetida.csv"
+    path.write_text("id,ciudad,poblacion,ciudad\n1,madrid,5,madrid\n", encoding="utf-8")
+
+    with pytest.raises(QualityCheckError, match="repite"):
+        pipeline.read_dataset(Dataset("d", str(path), ESQUEMA_CIUDADES))
+
+
+def test_read_dataset_un_origen_remoto_sin_nada_no_es_un_dataset_vacio(pipeline, tmp_path):
+    """Una ruta que no se puede mirar y de la que no sale nada no se da por vacia.
+
+    `file://` se trata como `s3://`: no se comprueba antes de leer. Antes se
+    devolvia un DataFrame vacio con el esquema, y un job que sobrescribe
+    vaciaba su salida por una ruta mal escrita. Sail no devuelve columnas y
+    PySpark falla al inferir el esquema: en ningun caso sale un DataFrame.
+    """
+    vacio = tmp_path / "vacio"
+    vacio.mkdir()
+
+    with pytest.raises(Exception):  # noqa: B017 - cada motor falla con su error
+        pipeline.read_dataset(Dataset("d", f"file://{vacio}", ESQUEMA_CIUDADES))
+
+    assert not pipeline.has_data

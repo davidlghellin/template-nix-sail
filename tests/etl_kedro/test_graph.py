@@ -174,26 +174,26 @@ def test_mermaid_dibuja_la_cadena_completa():
     salida = render_mermaid(discover_jobs())
 
     # Origen -> job -> intermedio -> job -> final.
-    assert "ciudades_raw[(ciudades_raw)] --> ciudades" in salida
-    assert "ciudades --> ciudades_dedup[(ciudades_dedup)]" in salida
-    assert "ciudades_dedup[(ciudades_dedup)] --> por_ccaa" in salida
-    assert "por_ccaa --> poblacion_por_ccaa[(poblacion_por_ccaa)]" in salida
+    assert "ds_ciudades_raw[(ciudades_raw)] --> job_ciudades" in salida
+    assert "job_ciudades --> ds_ciudades_dedup[(ciudades_dedup)]" in salida
+    assert "ds_ciudades_dedup[(ciudades_dedup)] --> job_por_ccaa" in salida
+    assert "job_por_ccaa --> ds_poblacion_por_ccaa[(poblacion_por_ccaa)]" in salida
 
 
 def test_mermaid_colorea_segun_el_papel_de_cada_nodo():
     # El color sale de entradas_externas/salidas_finales, no esta escrito a mano.
     salida = render_mermaid(discover_jobs())
 
-    assert "class ciudades,por_ccaa job" in salida
-    assert "class ciudades_raw externo" in salida
-    assert "class poblacion_por_ccaa final" in salida
+    assert "class job_ciudades,job_por_ccaa job" in salida
+    assert "class ds_ciudades_raw externo" in salida
+    assert "class ds_poblacion_por_ccaa final" in salida
 
 
 def test_mermaid_declara_un_nodo_por_job():
     salida = render_mermaid(discover_jobs())
 
     for nombre in discover_jobs().jobs:
-        assert f"{nombre}([{nombre}])" in salida
+        assert f"job_{nombre}([{nombre}])" in salida
 
 
 def test_las_dos_vistas_nombran_los_mismos_datasets():
@@ -271,3 +271,57 @@ def test_un_job_sin_run_no_se_carga(monkeypatch):
 
     with pytest.raises(JobMalDeclaradoError, match="run"):
         load_job("ciudades")
+
+
+def test_una_carpeta_sin_job_py_no_es_un_job(tmp_path, monkeypatch):
+    # Un paquete de utilidades compartidas dentro de `jobs/` no se lista.
+    import etl_kedro.jobs
+
+    comun = tmp_path / "comun"
+    comun.mkdir()
+    (comun / "__init__.py").touch()
+    monkeypatch.setattr(etl_kedro.jobs, "__path__", [*etl_kedro.jobs.__path__, str(tmp_path)])
+
+    assert "comun" not in nombres_de_jobs()
+    assert "ciudades" in nombres_de_jobs()
+
+
+def test_main_con_un_grafo_invalido_no_revienta(monkeypatch, capsys):
+    from etl_kedro.graph import CicloEnElGrafoError
+
+    def grafo_roto():
+        raise CicloEnElGrafoError("Hay un ciclo entre los jobs: a, b")
+
+    monkeypatch.setattr("etl_kedro.graph.discover_jobs", grafo_roto)
+
+    assert main([]) == 1
+    assert "ciclo" in capsys.readouterr().err
+
+
+def test_un_job_sin_init_py_se_lista_y_falla_al_cargar(tmp_path, monkeypatch):
+    # Antes desaparecia de `--all` sin avisar; ahora se ve y dice que le falta.
+    import etl_kedro.jobs
+    from etl_kedro.graph import JobMalDeclaradoError
+
+    ventas = tmp_path / "ventas"
+    ventas.mkdir()
+    (ventas / "job.py").write_text("CONSUME = ()\nPRODUCE = ()\ndef run(spark): ...\n")
+    monkeypatch.setattr(etl_kedro.jobs, "__path__", [*etl_kedro.jobs.__path__, str(tmp_path)])
+
+    assert "ventas" in nombres_de_jobs()
+    with pytest.raises(JobMalDeclaradoError, match="__init__.py"):
+        load_job("ventas")
+
+
+def test_mermaid_no_funde_un_job_y_un_dataset_con_el_mismo_nombre():
+    from etl_kedro.core.datasets import Dataset
+    from etl_kedro.graph import Grafo, Job
+
+    ventas = Dataset("ventas", "data/ventas")
+    guion, bajo = Dataset("a-b", "data/x"), Dataset("a_b", "data/y")
+    job = Job(nombre="ventas", modulo=None, consume=(guion, bajo), produce=(ventas,))  # type: ignore[arg-type]
+
+    salida = render_mermaid(Grafo(jobs={"ventas": job}))
+
+    assert "job_ventas --> ds_ventas[(ventas)]" in salida
+    assert "ds_a_2d_b" in salida and "ds_a_b" in salida

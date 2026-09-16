@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from etl_kedro.core.config import VAR_ENTORNO, VAR_FORMATO, VAR_RAIZ
+from etl_kedro.core.config import VAR_ENTORNO, VAR_RAIZ
 from etl_kedro.jobs.ciudades import job as ciudades_job
 from etl_kedro.jobs.ciudades.datasets import CIUDADES_DEDUP, CIUDADES_ESQUEMA, CIUDADES_RAW
 from etl_kedro.jobs.por_ccaa import job as por_ccaa_job
@@ -15,13 +15,13 @@ from etl_kedro.jobs.por_ccaa.datasets import POBLACION_POR_CCAA
 
 @pytest.fixture(autouse=True)
 def sin_configuracion_del_entorno(monkeypatch):
-    """Los tests no heredan `ETL_ENV`, `ETL_DATA_ROOT` ni `ETL_OUTPUT_FORMAT`.
+    """Los tests no heredan `ETL_ENV` ni `ETL_DATA_ROOT`.
 
     El README ensena a exportarlas, y quien lo haya hecho en su shell veria
     fallar la suite por su entorno y no por el codigo. El test que necesite una
     la pone el mismo.
     """
-    for variable in (VAR_ENTORNO, VAR_RAIZ, VAR_FORMATO):
+    for variable in (VAR_ENTORNO, VAR_RAIZ):
         monkeypatch.delenv(variable, raising=False)
 
 
@@ -37,15 +37,18 @@ def reapuntar_cadena(monkeypatch, tmp_path):
       a Spark: sin reapuntarlas, el test busca `resources/` en el directorio
       actual y solo pasa si pytest se lanza desde la raiz del repo.
 
+    `formato` cambia el de los datasets que produce la cadena: el test e2e
+    los declara en parquet para poder comprobar los tipos escritos.
+
     Rutas absolutas, no `chdir`: PySpark resuelve las relativas contra el
     directorio de la JVM, que se fija al arrancarla.
     """
 
-    def _reapuntar(entrada: str) -> tuple[Path, Path]:
+    def _reapuntar(entrada: str, formato: str = "csv") -> tuple[Path, Path]:
         dedup_ruta, final_ruta = tmp_path / "dedup", tmp_path / "por_ccaa"
         raw = replace(CIUDADES_RAW, ruta=str(entrada))
-        dedup = replace(CIUDADES_DEDUP, ruta=str(dedup_ruta))
-        final = replace(POBLACION_POR_CCAA, ruta=str(final_ruta))
+        dedup = replace(CIUDADES_DEDUP, ruta=str(dedup_ruta), formato=formato)
+        final = replace(POBLACION_POR_CCAA, ruta=str(final_ruta), formato=formato)
 
         monkeypatch.setattr(ciudades_job, "CIUDADES_RAW", raw)
         monkeypatch.setattr(ciudades_job, "CIUDADES_DEDUP", dedup)
@@ -80,10 +83,10 @@ def cli(spark, monkeypatch):
 def escribir_ciudades(tmp_path):
     """Devuelve una funcion que escribe un CSV valido para el dominio ciudades.
 
-    La cabecera sale de `CIUDADES_ESQUEMA`, no de una constante escrita a mano.
-    Los jobs leen con el esquema declarado y un esquema explicito se aplica
-    **por posicion**, asi que un test que fijara las columnas por su cuenta
-    dejaria de representar el contrato en cuanto alguien tocara el esquema.
+    La cabecera sale de `CIUDADES_ESQUEMA`, no de una constante escrita a mano:
+    los jobs exigen exactamente las columnas declaradas, y un test que fijara
+    las suyas dejaria de representar el contrato en cuanto alguien tocara el
+    esquema.
     """
     columnas = CIUDADES_ESQUEMA.fieldNames()
 

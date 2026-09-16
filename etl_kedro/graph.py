@@ -9,10 +9,10 @@ justo lo que un fichero central escrito a mano no consigue.
 
 import argparse
 import importlib
-import pkgutil
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol, cast
 
 import etl_kedro.jobs
@@ -159,7 +159,18 @@ def nombres_de_jobs() -> list[str]:
     cada ejecucion y hace que un efecto colateral en el import de cualquiera
     penalice a todos.
     """
-    return sorted(info.name for info in pkgutil.iter_modules(etl_kedro.jobs.__path__) if info.ispkg)
+    # Cuenta como job toda carpeta con `job.py`, tenga o no `__init__.py`: sin
+    # el, `pkgutil` no la veria y el job desapareceria de `--all` sin avisar.
+    # `load_job` exige despues el `__init__.py`, con un error que lo dice.
+    # Una carpeta de utilidades compartidas, sin `job.py`, no es un job.
+    return sorted(
+        {
+            carpeta.name
+            for base in etl_kedro.jobs.__path__
+            for carpeta in Path(base).iterdir()
+            if (carpeta / "job.py").is_file()
+        }
+    )
 
 
 def load_job(nombre: str) -> Job:
@@ -171,6 +182,11 @@ def load_job(nombre: str) -> Job:
         raise JobDesconocidoError(
             f"No existe el job {nombre!r}. Hay: {', '.join(nombres_de_jobs())}"
         )
+    # Sin `__init__.py` el import funcionaria como paquete de espacio de
+    # nombres, pero `setuptools` no lo empaquetaria y el job faltaria al
+    # instalar. Mejor fallar aqui, diciendo que falta.
+    if not any(Path(base, nombre, "__init__.py").is_file() for base in etl_kedro.jobs.__path__):
+        raise JobMalDeclaradoError(f"El job {nombre!r} no tiene __init__.py en su carpeta")
     # `cast` y no una comprobacion de tipos: lo que hace falta de verdad se
     # valida justo debajo.
     modulo = cast(ModuloJob, importlib.import_module(f"etl_kedro.jobs.{nombre}.job"))
@@ -228,9 +244,15 @@ def render(grafo: Grafo) -> str:
     return "\n".join(lineas)
 
 
-def _node_id(nombre: str) -> str:
-    """Identificador seguro para Mermaid a partir de un nombre de dataset o job."""
-    return "".join(char if char.isalnum() else "_" for char in nombre)
+def _node_id(nombre: str, tipo: str) -> str:
+    """Identificador seguro para Mermaid a partir de un nombre de job o dataset.
+
+    Con prefijo por tipo, para que un job y un dataset con el mismo nombre no
+    se fundan en un nodo. Lo que no es alfanumerico ni `_` se codifica en vez
+    de cambiarse por `_`, para que `a-b` y `a_b` no acaben siendo el mismo.
+    """
+    seguro = "".join(c if c.isalnum() or c == "_" else f"_{ord(c):x}_" for c in nombre)
+    return f"{tipo}_{seguro}"
 
 
 def render_mermaid(grafo: Grafo) -> str:
@@ -247,25 +269,25 @@ def render_mermaid(grafo: Grafo) -> str:
     lineas = ["flowchart LR"]
     for nombre in sorted(grafo.jobs):
         job = grafo.jobs[nombre]
-        job_id = _node_id(nombre)
+        job_id = _node_id(nombre, "job")
         lineas.append(f"    {job_id}([{nombre}])")
         for dataset in job.consume:
-            lineas.append(f"    {_node_id(dataset.nombre)}[({dataset.nombre})] --> {job_id}")
+            lineas.append(f"    {_node_id(dataset.nombre, 'ds')}[({dataset.nombre})] --> {job_id}")
         for dataset in job.produce:
-            lineas.append(f"    {job_id} --> {_node_id(dataset.nombre)}[({dataset.nombre})]")
+            lineas.append(f"    {job_id} --> {_node_id(dataset.nombre, 'ds')}[({dataset.nombre})]")
 
     lineas.append("")
     lineas.append("    classDef job fill:#2d6a9f,stroke:#1b3f5e,color:#fff")
     lineas.append("    classDef externo fill:#7a5c2e,stroke:#4a3619,color:#fff")
     lineas.append("    classDef final fill:#2f6b4f,stroke:#1c4130,color:#fff")
 
-    jobs_ids = ",".join(_node_id(nombre) for nombre in sorted(grafo.jobs))
+    jobs_ids = ",".join(_node_id(nombre, "job") for nombre in sorted(grafo.jobs))
     if jobs_ids:
         lineas.append(f"    class {jobs_ids} job")
     if externas:
-        lineas.append(f"    class {','.join(_node_id(n) for n in sorted(externas))} externo")
+        lineas.append(f"    class {','.join(_node_id(n, 'ds') for n in sorted(externas))} externo")
     if finales:
-        lineas.append(f"    class {','.join(_node_id(n) for n in sorted(finales))} final")
+        lineas.append(f"    class {','.join(_node_id(n, 'ds') for n in sorted(finales))} final")
 
     return "\n".join(lineas)
 
@@ -284,8 +306,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    grafo = discover_jobs()
-    print(render(grafo) if args.format == "text" else render_mermaid(grafo))
+    try:
+        grafo = discover_jobs()
+        salida = render(grafo) if args.format == "text" else render_mermaid(grafo)
+    except GrafoError as exc:
+        print(f"El grafo de jobs no es valido: {exc}", file=sys.stderr)
+        return 1
+    print(salida)
     return 0
 
 

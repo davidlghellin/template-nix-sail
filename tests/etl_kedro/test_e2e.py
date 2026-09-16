@@ -17,7 +17,7 @@ from etl_kedro.main import EXIT_OK, main
 
 
 @pytest.fixture
-def cadena_ejecutada(cli, monkeypatch, reapuntar_cadena, escribir_ciudades):
+def cadena_ejecutada(cli, reapuntar_cadena, escribir_ciudades):
     """Corre `--all` en parquet sobre `tmp_path` y devuelve donde quedo cada dataset."""
     entrada = escribir_ciudades(
         [
@@ -27,8 +27,9 @@ def cadena_ejecutada(cli, monkeypatch, reapuntar_cadena, escribir_ciudades):
             ("barcelona", 1600000, "Barcelona", "Cataluna", 101.4),
         ]
     )
-    dedup, final = reapuntar_cadena(entrada)
-    monkeypatch.setenv("ETL_OUTPUT_FORMAT", "parquet")
+    # Declarados en parquet: un CSV convierte todo a texto y no dejaria nada
+    # de tipos que comprobar.
+    dedup, final = reapuntar_cadena(entrada, formato="parquet")
 
     assert main(["--all"]) == EXIT_OK
     return {CIUDADES_DEDUP.nombre: str(dedup), POBLACION_POR_CCAA.nombre: str(final)}

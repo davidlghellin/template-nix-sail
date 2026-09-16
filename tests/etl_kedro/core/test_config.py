@@ -113,21 +113,3 @@ def test_una_ruta_absoluta_de_windows_escapa_de_la_raiz(ruta):
 def test_una_ruta_con_barra_inicial_escapa_de_la_raiz_en_cualquier_python(ruta):
     # Desde 3.13 `ntpath.isabs("/datos")` es False: la barra se comprueba aparte.
     assert Config(entorno="pro", raiz="D:\\lago").resolver(ruta) == ruta
-
-
-def test_un_formato_vacio_cuenta_como_no_configurado(monkeypatch):
-    # Igual que la raiz: `ETL_OUTPUT_FORMAT=` en un contenedor no es un error.
-    monkeypatch.setenv("ETL_OUTPUT_FORMAT", "")
-
-    assert Config.desde_entorno().formato_salida is None
-
-
-def test_el_formato_forzado_vale_tambien_fuera_de_la_cli(monkeypatch):
-    # Un job lanzado desde codigo usa `Config.desde_entorno()`: la variable
-    # tiene que alcanzar a los datasets de la cadena igual que desde la CLI.
-    monkeypatch.setenv("ETL_OUTPUT_FORMAT", "parquet")
-
-    config = Config.desde_entorno()
-
-    assert config.formato_de("ciudades_dedup", "csv") == "parquet"
-    assert config.formato_de("ciudades_raw", "csv") == "csv"  # externa: no se toca

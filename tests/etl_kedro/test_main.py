@@ -53,7 +53,6 @@ def test_parse_args_minimos():
     assert args.all is False
     assert args.input is None  # sin sobrescribir: se usa la ruta del dataset
     assert args.output is None
-    assert args.mode == "overwrite"
     assert args.key_col is None  # sin fijar: cada job aplica la suya
     assert args.log_level == "INFO"
 
@@ -87,8 +86,6 @@ def test_parse_args_completos():
             "in.csv",
             "--output",
             "out",
-            "--mode",
-            "append",
             "--key-col",
             "id",
             "--log-level",
@@ -96,7 +93,6 @@ def test_parse_args_completos():
         ]
     )
 
-    assert args.mode == "append"
     assert args.key_col == "id"
     assert args.log_level == "DEBUG"
 
@@ -106,12 +102,6 @@ def test_parse_args_rutas_sobrescriben_el_catalogo():
 
     assert args.input == "in.csv"
     assert args.output == "out"
-
-
-@pytest.mark.parametrize("valor", ["merge", "OVERWRITE", ""])
-def test_parse_args_mode_invalido(valor):
-    with pytest.raises(SystemExit):
-        parse_args(["--input", "in.csv", "--output", "out", "--mode", valor])
 
 
 def test_parse_args_log_level_invalido():
@@ -179,12 +169,19 @@ def test_main_entrada_inexistente_devuelve_exit_input(tmp_path):
     assert codigo == EXIT_INPUT
 
 
-def test_main_columna_clave_inexistente_devuelve_exit_quality(cli, csv_con_duplicados, tmp_path):
+def test_main_columna_clave_inexistente_se_rechaza_antes_de_spark(
+    monkeypatch, csv_con_duplicados, tmp_path
+):
+    # Es un argumento invalido, no un dato roto: sale como los demas (codigo 5).
+    monkeypatch.setattr(
+        "etl_kedro.main.spark_session", lambda *_: pytest.fail("no deberia arrancar Spark")
+    )
+
     codigo = main(
         ["--input", csv_con_duplicados, "--output", str(tmp_path / "out"), "--key-col", "id"]
     )
 
-    assert codigo == EXIT_QUALITY
+    assert codigo == EXIT_CONFIG
     assert not (tmp_path / "out").exists()  # no escribe nada si falla el check
 
 
@@ -223,7 +220,6 @@ def test_ejecutar_job_no_pasa_lo_que_no_se_ha_pedido(job_espia):
     assert "input_path" not in job_espia
     assert "output_path" not in job_espia
     assert "key_col" not in job_espia
-    assert job_espia["mode"] == "overwrite"
 
 
 def test_ejecutar_job_pasa_lo_que_si_se_ha_pedido(job_espia):
@@ -262,12 +258,6 @@ def test_main_dry_run_de_un_job_revisa_la_ruta_de_input(tmp_path, capsys):
     salida = capsys.readouterr().out
     assert codigo == EXIT_DRY_RUN
     assert "no-existe.csv" in salida
-
-
-def test_parse_args_all_no_admite_append():
-    # Append en la cadena acumula los intermedios y el agregado los suma de nuevo.
-    with pytest.raises(SystemExit):
-        parse_args(["--all", "--mode", "append"])
 
 
 def test_main_no_escribe_encima_de_su_entrada(tmp_path, monkeypatch, escribir_ciudades):
@@ -314,7 +304,7 @@ def test_un_argumento_invalido_no_sale_con_el_codigo_de_calidad():
     # argparse sale con 2, que aqui es un fallo de dato: un comando mal escrito
     # tiene que distinguirse en el orquestador.
     with pytest.raises(SystemExit) as salida:
-        parse_args(["--all", "--mode", "append"])
+        parse_args(["--all", "--input", "x"])
 
     assert salida.value.code == EXIT_CONFIG
     assert EXIT_CONFIG != EXIT_QUALITY
@@ -338,3 +328,37 @@ def test_un_fichero_que_falta_en_el_motor_no_es_una_entrada_no_encontrada(
     codigo = main(["--input", entrada, "--output", str(tmp_path / "out")])
 
     assert codigo == EXIT_ERROR
+
+
+def test_parse_args_all_no_admite_job():
+    # Antes se ignoraba `--job` y se lanzaba la cadena entera.
+    with pytest.raises(SystemExit):
+        parse_args(["--all", "--job", "por_ccaa"])
+
+
+def test_main_dry_run_avisa_de_una_clave_que_no_existe(capsys):
+    codigo = main(["--job", "ciudades", "--key-col", "no_existe", "--dry-run"])
+
+    assert codigo == EXIT_DRY_RUN
+    assert "no_existe" in capsys.readouterr().out
+
+
+def test_main_un_comodin_sin_coincidencias_no_toca_la_salida(tmp_path, monkeypatch):
+    salida = tmp_path / "salida"
+    salida.mkdir()
+    (salida / "previa.csv").write_text("dato,previo\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "etl_kedro.main.spark_session", lambda *_: pytest.fail("no deberia arrancar Spark")
+    )
+
+    codigo = main(["--input", str(tmp_path / "no_casa*.csv"), "--output", str(salida)])
+
+    assert codigo == EXIT_INPUT
+    assert (salida / "previa.csv").exists()
+
+
+def test_main_dry_run_avisa_de_un_comodin_sin_coincidencias(tmp_path, capsys):
+    codigo = main(["--dry-run", "--input", str(tmp_path / "no_casa*.csv")])
+
+    assert codigo == EXIT_DRY_RUN
+    assert "no existe la entrada" in capsys.readouterr().out

@@ -196,31 +196,24 @@ def test_dataset_resolver_usa_la_config():
     assert replace(dataset, ruta="/fijo/x").resolver(Config(raiz="/lago")) == "/fijo/x"
 
 
-def test_detecta_las_columnas_cambiadas_de_orden(tmp_path):
-    """Mismas columnas, otro orden: Sail no lo detecta, el dry-run si.
-
-    Un esquema explicito se aplica por posicion, asi que el fichero se leeria
-    con `ciudad` y `habitantes` cruzadas.
-    """
+def test_las_columnas_en_otro_orden_no_son_un_problema(tmp_path):
+    # Se leen por nombre, asi que el orden del fichero da igual.
     path = tmp_path / "entrada.csv"
     path.write_text("habitantes,ciudad\n3200000,madrid\n", encoding="utf-8")
     entrada = Dataset("entrada", str(path), ESQUEMA)
     grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
 
-    problemas = revisar_entradas(grafo, Config())
-
-    assert len(problemas) == 1
-    assert "otro orden" in problemas[0].mensaje
+    assert revisar_entradas(grafo, Config()) == []
 
 
 def test_el_dryrun_y_la_lectura_usan_la_misma_comprobacion(tmp_path):
     # Lo que el dry-run da por bueno no puede fallar al leer, ni al reves.
     path = tmp_path / "entrada.csv"
-    path.write_text("habitantes,ciudad\n3200000,madrid\n", encoding="utf-8")
+    path.write_text("ciudad,sobrante\nmadrid,x\n", encoding="utf-8")
     entrada = Dataset("entrada", str(path), ESQUEMA)
 
     del_dryrun = revisar_entradas(Grafo(jobs={"a": job_falso("a", consume=(entrada,))}), Config())
-    del_lector = problema_de_cabecera(ESQUEMA, ["habitantes", "ciudad"])
+    del_lector = problema_de_cabecera(ESQUEMA, ["ciudad", "sobrante"])
 
     assert del_lector is not None
     assert del_dryrun[0].mensaje == del_lector
@@ -270,24 +263,14 @@ def test_el_plan_usa_las_rutas_de_la_cli(tmp_path):
     assert "/tmp/fuera" in plan
 
 
-def test_una_entrada_con_comodines_no_se_da_por_inexistente(tmp_path):
-    # La ejecucion la acepta porque la resuelve el motor: el dry-run tambien.
+def test_una_entrada_con_comodines_que_casan_no_se_da_por_inexistente(tmp_path):
+    # La ejecucion la acepta porque casa con ficheros: el dry-run tambien.
+    (tmp_path / "datos").mkdir()
+    (tmp_path / "datos" / "a.csv").write_text("ciudad,habitantes\nmadrid,1\n", encoding="utf-8")
     entrada = Dataset("entrada", str(tmp_path / "datos" / "*.csv"), ESQUEMA)
     grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
 
     assert revisar_entradas(grafo, Config()) == []
-
-
-def test_con_parquet_forzado_no_revisa_una_cabecera_csv(tmp_path):
-    # La ejecucion leera parquet: contrastar una cabecera CSV no dice nada.
-    path = tmp_path / "entrada.csv"
-    path.write_text("otra,cosa\n1,2\n", encoding="utf-8")
-    entrada = Dataset("entrada", str(path), ESQUEMA)
-    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
-    config = Config(formato_salida="parquet", datasets_forzados=frozenset({"entrada"}))
-
-    assert revisar_entradas(grafo, Config()) != []  # sin forzar, la cabecera no cuadra
-    assert revisar_entradas(grafo, config) == []
 
 
 def test_detecta_el_mismo_dataset_con_dos_formatos():
