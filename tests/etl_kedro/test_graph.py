@@ -257,3 +257,17 @@ def test_un_job_sin_declarar_consume_o_produce_no_se_carga(monkeypatch):
 
     with pytest.raises(JobMalDeclaradoError, match="CONSUME"):
         load_job("ciudades")
+
+
+def test_un_job_sin_run_no_se_carga(monkeypatch):
+    import types
+
+    from etl_kedro.graph import JobMalDeclaradoError
+
+    sin_run = types.ModuleType("etl_kedro.jobs.ciudades.job")
+    sin_run.CONSUME = ()  # type: ignore[attr-defined]
+    sin_run.PRODUCE = ()  # type: ignore[attr-defined]
+    monkeypatch.setattr("etl_kedro.graph.importlib.import_module", lambda _: sin_run)
+
+    with pytest.raises(JobMalDeclaradoError, match="run"):
+        load_job("ciudades")

@@ -92,10 +92,66 @@ def rutas_solapadas(a: str, b: str) -> bool:
 
     x, y = normalizar(a), normalizar(b)
     separadores = ("/", os.sep)
-    return (
+    if (
         x == y
         or any(x.startswith(y + sep) for sep in separadores)
         or any(y.startswith(x + sep) for sep in separadores)
+    ):
+        return True
+    # Comparar texto no basta en un sistema de ficheros que no distingue
+    # mayusculas (el de macOS por defecto): `Solape` y `solape` son la misma
+    # carpeta y `realpath` no lo corrige. Donde las rutas existen, se compara la
+    # identidad del fichero, subiendo por los padres de cada una.
+    if URI_SEPARATOR in x or URI_SEPARATOR in y:
+        return False
+    return _dentro_por_identidad(x, y) or _dentro_por_identidad(y, x)
+
+
+def _dentro_por_identidad(ruta: str, contenedor: str) -> bool:
+    """True si `ruta`, o alguno de sus padres, es el mismo fichero que `contenedor`."""
+    if not os.path.exists(contenedor):
+        return False
+    camino = Path(ruta)
+    for candidato in (camino, *camino.parents):
+        if candidato.exists() and os.path.samefile(candidato, contenedor):
+            return True
+    return False
+
+
+class EntradaNoEncontradaError(FileNotFoundError):
+    """Una entrada de la ETL no existe.
+
+    Subclase propia y no `FileNotFoundError` a secas: la CLI traduce esta a
+    "entrada no encontrada" (codigo 4) sin traceback, y cualquier otro fichero
+    que falte, como el `spark-submit` de un `SPARK_HOME` roto, sigue saliendo
+    como lo que es.
+    """
+
+
+def problema_de_formato(ruta: str, formato: str) -> str | None:
+    """Mensaje si un directorio contiene datos en el otro formato; `None` si no.
+
+    Pasa al dejar un dataset en parquet con `ETL_OUTPUT_FORMAT=parquet` y
+    lanzar despues sin la variable: se leerian partes parquet como CSV, el
+    motor fallaria con un error de parseo y, con `overwrite`, despues de haber
+    vaciado la salida anterior. Solo se avisa del caso claro (hay partes del
+    otro formato y ninguna del esperado), para no dar falsos positivos con
+    compresiones u otros nombres de fichero.
+    """
+    if not se_comprueba_en_local(ruta) or not os.path.isdir(ruta):
+        return None
+    datos = [f for f in os.listdir(ruta) if not f.startswith((".", "_"))]
+    csvs = [f for f in datos if f.endswith(".csv")]
+    parquets = [f for f in datos if f.endswith(".parquet")]
+    if formato == "csv" and parquets and not csvs:
+        encontrado = "parquet"
+    elif formato == "parquet" and csvs and not parquets:
+        encontrado = "CSV"
+    else:
+        return None
+    return (
+        f"se lee como {formato} y el directorio tiene {encontrado}: {ruta}. "
+        "Revisa ETL_OUTPUT_FORMAT, que tiene que ser el mismo con el que se escribio"
     )
 
 
@@ -111,7 +167,7 @@ def check_input_exists(path: str) -> None:
     if not se_comprueba_en_local(path):
         return
     if not Path(path).exists():
-        raise FileNotFoundError(f"No existe la ruta de entrada: {path}")
+        raise EntradaNoEncontradaError(f"No existe la ruta de entrada: {path}")
 
 
 def cabecera_csv(ruta: str) -> list[str] | None:

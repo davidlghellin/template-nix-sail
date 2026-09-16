@@ -10,11 +10,12 @@ import inspect
 import logging
 import sys
 from collections.abc import Sequence
+from typing import NoReturn
 
 from pyspark.sql import SparkSession
 
 from etl_kedro.core.config import Config, ConfigError
-from etl_kedro.core.datasets import check_input_exists
+from etl_kedro.core.datasets import EntradaNoEncontradaError, check_input_exists
 from etl_kedro.core.logging_conf import VALID_LOG_LEVELS, setup_logging
 from etl_kedro.core.quality import QualityCheckError
 from etl_kedro.core.session import BackendError, spark_session
@@ -36,9 +37,21 @@ EXIT_CONFIG = 5
 EXIT_DRY_RUN = 6
 
 
+class _Parser(argparse.ArgumentParser):
+    """`ArgumentParser` que sale con `EXIT_CONFIG` ante argumentos invalidos.
+
+    argparse usa siempre el 2, que aqui es `EXIT_QUALITY`: un orquestador no
+    distinguiria un comando mal escrito de un dato que no cumple el contrato.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_CONFIG, f"{self.prog}: error: {message}\n")
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parsea los argumentos de la CLI."""
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="etl-kedro",
         description="ETL de CSV con PySpark: lectura, checks de calidad y escritura.",
     )
@@ -187,7 +200,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_DRY_RUN
         logger.error("El grafo de jobs no es valido: %s", exc)
         return EXIT_CONFIG
-    except FileNotFoundError as exc:
+    except EntradaNoEncontradaError as exc:
         logger.error("Entrada no encontrada: %s", exc)
         return EXIT_INPUT
     except Exception:

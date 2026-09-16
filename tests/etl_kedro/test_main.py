@@ -14,6 +14,7 @@ from etl_kedro.main import (
     EXIT_BACKEND,
     EXIT_CONFIG,
     EXIT_DRY_RUN,
+    EXIT_ERROR,
     EXIT_INPUT,
     EXIT_OK,
     EXIT_QUALITY,
@@ -307,3 +308,33 @@ def test_main_dry_run_informa_de_un_ciclo_en_vez_de_romper(grafo_con_ciclo, caps
 
 def test_main_un_grafo_invalido_es_error_de_configuracion(grafo_con_ciclo):
     assert main(["--all"]) == EXIT_CONFIG
+
+
+def test_un_argumento_invalido_no_sale_con_el_codigo_de_calidad():
+    # argparse sale con 2, que aqui es un fallo de dato: un comando mal escrito
+    # tiene que distinguirse en el orquestador.
+    with pytest.raises(SystemExit) as salida:
+        parse_args(["--all", "--mode", "append"])
+
+    assert salida.value.code == EXIT_CONFIG
+    assert EXIT_CONFIG != EXIT_QUALITY
+
+
+def test_un_fichero_que_falta_en_el_motor_no_es_una_entrada_no_encontrada(
+    monkeypatch, escribir_ciudades, tmp_path
+):
+    """Solo las entradas de la ETL salen con codigo 4.
+
+    Un `SPARK_HOME` roto tambien lanza `FileNotFoundError`, y presentarlo como
+    "entrada no encontrada" mandaria a buscar un CSV que si esta.
+    """
+    entrada = escribir_ciudades([("madrid", 1, "Madrid", "Comunidad de Madrid", 1.0)])
+
+    def motor_roto(*_args, **_kwargs):
+        raise FileNotFoundError("/no/existe/bin/spark-submit")
+
+    monkeypatch.setattr("etl_kedro.main.spark_session", motor_roto)
+
+    codigo = main(["--input", entrada, "--output", str(tmp_path / "out")])
+
+    assert codigo == EXIT_ERROR

@@ -15,6 +15,7 @@ from etl_kedro.core.datasets import (
     check_input_exists,
     formato_efectivo,
     problema_de_cabecera,
+    problema_de_formato,
     se_comprueba_en_local,
 )
 from etl_kedro.core.quality import QualityCheckError
@@ -114,6 +115,10 @@ class ETLPipeline:
         ruta = path if path is not None else dataset.resolver(config)
         check_input_exists(ruta)
         formato = formato_efectivo(dataset, config, sobrescrita=path is not None)
+        # Antes de leer, y por tanto antes de escribir nada.
+        problema = problema_de_formato(ruta, formato)
+        if problema:
+            raise QualityCheckError(f"[{dataset.nombre}] {problema}")
         if formato == "parquet":
             # Parquet lleva su esquema dentro, pero se pasa igual el declarado:
             # un directorio sin ficheros (lo que deja Sail al escribir un

@@ -11,12 +11,24 @@ import argparse
 import importlib
 import pkgutil
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from types import ModuleType
+from typing import Protocol, cast
 
 import etl_kedro.jobs
 from etl_kedro.core.datasets import Dataset
+
+
+class ModuloJob(Protocol):
+    """Lo que un `job.py` tiene que exponer para formar parte del grafo.
+
+    Tiparlo asi, y no como un `ModuleType` cualquiera, deja escrito el
+    contrato y permite comprobar sus atributos sin `getattr`.
+    """
+
+    CONSUME: tuple[Dataset, ...]
+    PRODUCE: tuple[Dataset, ...]
+    run: Callable[..., object]
 
 
 @dataclass(frozen=True)
@@ -24,7 +36,7 @@ class Job:
     """Un job descubierto, con lo que declara consumir y producir."""
 
     nombre: str
-    modulo: ModuleType
+    modulo: ModuloJob
     consume: tuple[Dataset, ...]
     produce: tuple[Dataset, ...]
 
@@ -132,7 +144,7 @@ class ProductorDuplicadoError(GrafoError):
 
 
 class JobMalDeclaradoError(GrafoError):
-    """Un job no declara `CONSUME` o `PRODUCE`, y no se puede situar en el grafo."""
+    """Un job no declara `CONSUME`, `PRODUCE` o `run`, y no se puede usar."""
 
 
 class JobDesconocidoError(GrafoError):
@@ -159,11 +171,13 @@ def load_job(nombre: str) -> Job:
         raise JobDesconocidoError(
             f"No existe el job {nombre!r}. Hay: {', '.join(nombres_de_jobs())}"
         )
-    modulo = importlib.import_module(f"etl_kedro.jobs.{nombre}.job")
+    # `cast` y no una comprobacion de tipos: lo que hace falta de verdad se
+    # valida justo debajo.
+    modulo = cast(ModuloJob, importlib.import_module(f"etl_kedro.jobs.{nombre}.job"))
     # Sin valor por defecto: un job que olvida declararlos quedaria en el grafo
     # como si no dependiera de nadie, y `--all` lo lanzaria antes de que exista
     # su entrada. Un job sin entradas lo dice explicitamente con `CONSUME = ()`.
-    faltan = [attr for attr in ("CONSUME", "PRODUCE") if not hasattr(modulo, attr)]
+    faltan = [attr for attr in ("CONSUME", "PRODUCE", "run") if not hasattr(modulo, attr)]
     if faltan:
         raise JobMalDeclaradoError(
             f"El job {nombre!r} no declara {' ni '.join(faltan)} en su job.py"

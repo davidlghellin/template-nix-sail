@@ -20,6 +20,7 @@ from etl_kedro.core.datasets import (
     cabecera_csv,
     formato_efectivo,
     problema_de_cabecera,
+    problema_de_formato,
     rutas_solapadas,
     se_comprueba_en_local,
 )
@@ -138,6 +139,9 @@ def _revisar_cabecera(nombre: str, dataset: Dataset, ruta: str, formato: str) ->
     `ETL_OUTPUT_FORMAT=parquet` los datasets de la cadena se leen como parquet,
     que no tiene cabecera que contrastar.
     """
+    problema_formato = problema_de_formato(ruta, formato)
+    if problema_formato:
+        return [Problema(nombre, problema_formato)]
     if dataset.esquema is None or formato != "csv":
         return []
     cabecera = cabecera_csv(ruta)

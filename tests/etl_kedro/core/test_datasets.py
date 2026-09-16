@@ -116,3 +116,36 @@ def test_cabecera_csv_de_un_fichero_que_no_es_utf8(tmp_path):
     path.write_bytes("ciudad,comunidad\nlleida,Catalu\xf1a\n".encode("latin-1"))
 
     assert cabecera_csv(str(path)) == ["ciudad", "comunidad"]
+
+
+def test_rutas_solapadas_con_otra_capitalizacion(tmp_path):
+    # En un sistema de ficheros que no distingue mayusculas (macOS por defecto)
+    # son la misma carpeta, aunque el texto no coincida.
+    from etl_kedro.core.datasets import rutas_solapadas
+
+    carpeta = tmp_path / "Solape"
+    carpeta.mkdir()
+    (carpeta / "entrada.csv").write_text("a\n", encoding="utf-8")
+    otra = tmp_path / "solape"
+    if not otra.exists():
+        pytest.skip("este sistema de ficheros distingue mayusculas")
+
+    assert rutas_solapadas(str(carpeta / "entrada.csv"), str(otra))
+
+
+def test_problema_de_formato_detecta_partes_del_otro_formato(tmp_path):
+    from etl_kedro.core.datasets import problema_de_formato
+
+    parquet = tmp_path / "pq"
+    parquet.mkdir()
+    (parquet / "abc_0.zst.parquet").write_bytes(b"PAR1")
+    (parquet / "_SUCCESS").touch()
+    csv = tmp_path / "csv"
+    csv.mkdir()
+    (csv / "part-0.csv").write_text("a\n", encoding="utf-8")
+
+    assert "tiene parquet" in (problema_de_formato(str(parquet), "csv") or "")
+    assert "tiene CSV" in (problema_de_formato(str(csv), "parquet") or "")
+    assert problema_de_formato(str(parquet), "parquet") is None
+    assert problema_de_formato(str(csv), "csv") is None
+    assert problema_de_formato(str(tmp_path / "vacio-no-existe"), "csv") is None

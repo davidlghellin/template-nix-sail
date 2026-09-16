@@ -354,3 +354,14 @@ def test_read_dataset_parquet_de_un_directorio_vacio_trae_las_columnas(pipeline,
 
     assert pipeline.df.columns == ["id", "ciudad"]
     assert pipeline.count() == 0
+
+
+def test_read_dataset_no_lee_parquet_como_csv(pipeline, tmp_path):
+    # Un dataset que se dejo en parquet y se lee sin ETL_OUTPUT_FORMAT: tiene
+    # que cortar como fallo de dato antes de leer, y por tanto antes de escribir.
+    esquema = StructType([StructField("id", StringType()), StructField("ciudad", StringType())])
+    ruta = tmp_path / "en_parquet"
+    pipeline.spark.createDataFrame([("1", "madrid")], esquema).write.parquet(str(ruta))
+
+    with pytest.raises(QualityCheckError, match="tiene parquet"):
+        pipeline.read_dataset(Dataset("d", str(ruta), esquema))
