@@ -66,14 +66,29 @@ def test_falla_si_falta_la_columna_de_habitantes(spark, tmp_path):
         job.run(spark, str(entrada), str(tmp_path / "salida"))
 
 
-def test_una_clave_distinta_no_escribe_una_salida_que_rompa_el_contrato(
-    spark, csv_ciudades, tmp_path
-):
-    # Agrupar por otra columna dejaria `provincia` donde el catalogo promete
-    # `comunidad_autonoma`, y el siguiente que lo lea cruzaria las columnas.
-    salida = tmp_path / "salida"
+def test_no_admite_otra_clave(monkeypatch, csv_ciudades, tmp_path):
+    """Agrupar por otra columna no cumpliria nunca el esquema de salida.
 
-    with pytest.raises(QualityCheckError, match="comunidad_autonoma"):
-        job.run(spark, csv_ciudades, str(salida), key_col="provincia")
+    La CLI lo rechaza antes de arrancar Spark, en vez de dejar que el trabajo
+    se haga entero y falle al escribir.
+    """
+    from etl_kedro.main import EXIT_CONFIG, main
 
-    assert not salida.exists()
+    monkeypatch.setattr(
+        "etl_kedro.main.spark_session", lambda *_: pytest.fail("no deberia arrancar Spark")
+    )
+
+    codigo = main(
+        [
+            "--job",
+            "por_ccaa",
+            "--input",
+            csv_ciudades,
+            "--output",
+            str(tmp_path / "s"),
+            "--key-col",
+            "provincia",
+        ]
+    )
+
+    assert codigo == EXIT_CONFIG

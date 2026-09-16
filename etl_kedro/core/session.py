@@ -40,6 +40,15 @@ def resolve_backend(backend: str | None = None) -> str:
     return value
 
 
+def ejecutable_java(sistema: str | None = None) -> str:
+    """Nombre del binario de Java dentro de `JAVA_HOME/bin` en cada sistema.
+
+    El sistema se lee al llamar, no al definir la funcion: asi se puede simular
+    otro en un test.
+    """
+    return "java.exe" if (sistema or os.name) == "nt" else "java"
+
+
 def check_java_available() -> None:
     """Comprueba que hay una JVM para el backend `pyspark`.
 
@@ -51,7 +60,7 @@ def check_java_available() -> None:
     """
     java_home = os.environ.get("JAVA_HOME")
     if java_home:
-        java = Path(java_home) / "bin" / "java"
+        java = Path(java_home) / "bin" / ejecutable_java()
         # Que exista no basta: sin permiso de ejecucion falla igual al lanzarlo.
         if java.is_file() and os.access(java, os.X_OK):
             return

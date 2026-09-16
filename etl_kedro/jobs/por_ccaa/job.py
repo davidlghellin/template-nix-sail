@@ -27,7 +27,6 @@ def run(
     spark: SparkSession,
     input_path: str | None = None,
     output_path: str | None = None,
-    key_col: str = CLAVE,
     mode: str = "overwrite",
     config: Config | None = None,
 ) -> ETLPipeline:
@@ -43,8 +42,9 @@ def run(
     # salida. `read_dataset` comprueba la ruta y lo dice claro si no esta.
     pipeline.read_dataset(CIUDADES_DEDUP, config, path=input_path)
 
-    logger.info("== aggregate == por %r", key_col)
-    pipeline.transform(lambda df: transform.agregar_por_ccaa(df, key_col), name="agregar_por_ccaa")
+    # Sin `key_col`: la columna agrupada es la salida y el catalogo la fija.
+    logger.info("== aggregate == por %r", CLAVE)
+    pipeline.transform(lambda df: transform.agregar_por_ccaa(df, CLAVE), name="agregar_por_ccaa")
 
     logger.info("== write == %s (mode=%s)", destino, mode)
     pipeline.write_dataset(POBLACION_POR_CCAA, config, path=output_path, mode=mode)

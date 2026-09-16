@@ -55,25 +55,40 @@ def check_non_null_key(df: DataFrame, key_col: str) -> DataFrame:
     return df
 
 
-def deduplicate_by_key(df: DataFrame, key_col: str, keep: KeepStrategy = "first") -> DataFrame:
+def deduplicate_by_key(
+    df: DataFrame,
+    key_col: str,
+    keep: KeepStrategy = "first",
+    order_col: str | None = None,
+) -> DataFrame:
     """Deja una sola fila por valor de `key_col`.
 
-    `keep="first"` conserva la primera aparicion segun el orden de lectura y
-    `keep="last"` la ultima. El orden se materializa con
-    `monotonically_increasing_id`, que es creciente dentro de cada particion:
-    con ficheros leidos en una sola pasada reproduce el orden del origen, pero
-    no es un orden total garantizado si el origen esta reparticionado. Cuando el
-    criterio importe, ordena antes por una columna de negocio.
+    `keep="first"` conserva la fila con el menor valor de `order_col` y
+    `keep="last"` la del mayor. Si importa **cual** de los duplicados se queda,
+    pasa `order_col`: es la unica forma de que el resultado sea determinista.
+
+    Sin `order_col` se usa `monotonically_increasing_id`, que **no** es el orden
+    del fichero. Es creciente dentro de cada particion, pero el motor decide
+    como numerarlas: en PySpark un CSV leido de una pasada sale en orden, y en
+    Sail, con un fichero grande, la ultima fila puede recibir un id menor que
+    la primera. Vale para quitar duplicados exactos; no para elegir entre filas
+    que difieren.
     """
     if keep not in ("first", "last"):
         raise ValueError(f"keep invalido: {keep!r}. Validos: 'first', 'last'")
-    check_required_columns(df, [key_col])
+    check_required_columns(df, [key_col] + ([order_col] if order_col else []))
 
     original_cols = df.columns
     row_id = _nombre_libre(_ROW_ID_COL, original_cols)
     row_number = _nombre_libre(_ROW_NUMBER_COL, original_cols)
-    ordered = df.withColumn(row_id, F.monotonically_increasing_id())
-    order_by = F.col(row_id).asc() if keep == "first" else F.col(row_id).desc()
+    ordered = df.withColumn(
+        row_id, F.col(order_col) if order_col else F.monotonically_increasing_id()
+    )
+    # Nulos al final en los dos sentidos: una fila sin valor de orden no es "la
+    # primera" ni "la ultima", y `asc()` la pondria delante.
+    order_by = (
+        F.col(row_id).asc_nulls_last() if keep == "first" else F.col(row_id).desc_nulls_last()
+    )
     window = Window.partitionBy(key_col).orderBy(order_by)
 
     return (

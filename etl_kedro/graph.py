@@ -114,19 +114,28 @@ class Grafo:
         return orden
 
 
-class CicloEnElGrafoError(RuntimeError):
+class GrafoError(RuntimeError):
+    """El grafo de jobs no se puede construir o no tiene sentido.
+
+    Base comun para que la CLI los trate como un fallo de configuracion del
+    proyecto, con su mensaje y sin traceback, y el dry-run como un problema
+    del plan.
+    """
+
+
+class CicloEnElGrafoError(GrafoError):
     """Los jobs se consumen en circulo y no hay orden de ejecucion posible."""
 
 
-class ProductorDuplicadoError(RuntimeError):
+class ProductorDuplicadoError(GrafoError):
     """Dos jobs declaran producir el mismo dataset y el grafo es ambiguo."""
 
 
-class JobMalDeclaradoError(RuntimeError):
+class JobMalDeclaradoError(GrafoError):
     """Un job no declara `CONSUME` o `PRODUCE`, y no se puede situar en el grafo."""
 
 
-class JobDesconocidoError(RuntimeError):
+class JobDesconocidoError(GrafoError):
     """Se ha pedido un job que no existe como subpaquete de `etl_kedro.jobs`."""
 
 

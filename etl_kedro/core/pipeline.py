@@ -1,6 +1,7 @@
 """Pipeline ETL minimo sobre CSV: leer, transformar y escribir."""
 
 import logging
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -12,7 +13,9 @@ from etl_kedro.core.datasets import (
     Dataset,
     cabecera_csv,
     check_input_exists,
+    formato_efectivo,
     problema_de_cabecera,
+    se_comprueba_en_local,
 )
 from etl_kedro.core.quality import QualityCheckError
 
@@ -110,12 +113,17 @@ class ETLPipeline:
         """
         ruta = path if path is not None else dataset.resolver(config)
         check_input_exists(ruta)
-        formato = (config or Config()).formato_de(dataset.nombre, dataset.formato)
+        formato = formato_efectivo(dataset, config, sobrescrita=path is not None)
         if formato == "parquet":
-            # Parquet ya lleva su esquema dentro: no hay cabecera que contrastar
-            # ni tipos que inferir.
+            # Parquet lleva su esquema dentro, pero se pasa igual el declarado:
+            # un directorio sin ficheros (lo que deja Sail al escribir un
+            # resultado vacio) se leeria sin columnas y el siguiente check
+            # fallaria por un dato que no esta mal.
             logger.info("Leyendo parquet de %s", ruta)
-            self._df = self.spark.read.parquet(ruta)
+            lector = self.spark.read
+            if dataset.esquema is not None:
+                lector = lector.schema(dataset.esquema)
+            self._df = lector.parquet(ruta)
             logger.info("Parquet leido con columnas %s", self._df.columns)
             return self
 
@@ -180,13 +188,20 @@ class ETLPipeline:
                 raise QualityCheckError(
                     f"[{dataset.nombre}] la salida no cumple el esquema declarado: {problema}"
                 )
-        formato = (config or Config()).formato_de(dataset.nombre, dataset.formato)
+        formato = formato_efectivo(dataset, config, sobrescrita=path is not None)
         if formato == "parquet":
             logger.info("Escribiendo parquet en %s (mode=%s)", ruta, mode)
             self.df.write.parquet(ruta, mode=mode)
             logger.info("Escritura completada en %s", ruta)
-            return self
-        return self.write_csv(ruta, mode=mode)
+        else:
+            self.write_csv(ruta, mode=mode)
+        # Sail no escribe nada para un DataFrame vacio en una ruta nueva, ni el
+        # directorio; PySpark crea un directorio con la cabecera. Sin esto, en
+        # Sail el siguiente job de la cadena falla con "no existe la entrada"
+        # donde en PySpark lee cero filas.
+        if se_comprueba_en_local(ruta) and not os.path.exists(ruta):
+            os.makedirs(ruta)
+        return self
 
     def count(self) -> int:
         """Numero de filas del DataFrame actual."""

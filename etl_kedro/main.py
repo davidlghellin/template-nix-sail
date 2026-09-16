@@ -6,10 +6,10 @@ Uso (la clave por defecto es `ciudad`, la del dataset de ciudades):
 """
 
 import argparse
+import inspect
 import logging
 import sys
 from collections.abc import Sequence
-from dataclasses import replace
 
 from pyspark.sql import SparkSession
 
@@ -18,8 +18,8 @@ from etl_kedro.core.datasets import check_input_exists
 from etl_kedro.core.logging_conf import VALID_LOG_LEVELS, setup_logging
 from etl_kedro.core.quality import QualityCheckError
 from etl_kedro.core.session import BackendError, spark_session
-from etl_kedro.dryrun import entradas_de_la_ejecucion, render_plan, revisar
-from etl_kedro.graph import Grafo, discover_jobs, load_job, nombres_de_jobs
+from etl_kedro.dryrun import entradas_de_la_ejecucion, render_plan, revisar, revisar_solapes
+from etl_kedro.graph import Grafo, GrafoError, discover_jobs, load_job, nombres_de_jobs
 
 logger = logging.getLogger("etl_kedro.main")
 
@@ -89,6 +89,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # es su salida: una sola clave para toda la cadena rompe al menos uno.
     if args.all and args.key_col:
         parser.error("--all usa la clave de cada job: no admite --key-col")
+    # En la cadena, append acumularia tambien los datasets intermedios: el job
+    # siguiente leeria todas las ejecuciones anteriores y las volveria a sumar.
+    if args.all and args.mode == "append":
+        parser.error("--all reescribe la cadena entera: no admite --mode append")
     return args
 
 
@@ -136,18 +140,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             grafo = Grafo(jobs={args.job: load_job(args.job)})
             a_ejecutar = [args.job]
 
-        if config.formato_salida:
-            # El formato forzado solo alcanza a lo que produce la cadena: las
-            # entradas externas las escribio otro. Quien produce que sale del
-            # grafo completo, aunque solo se ejecute un job; si ya se ha
-            # construido, no se vuelven a importar todos.
-            completo = grafo if args.all or args.dry_run else discover_jobs()
-            config = replace(config, datasets_forzados=frozenset(completo.productor_de))
+        # Solo los jobs que la usan admiten clave. En `por_ccaa` la columna
+        # agrupada es su salida, y otra no cumpliria nunca el esquema: se
+        # rechaza aqui y no despues de que Spark haya hecho todo el trabajo.
+        if args.key_col:
+            for nombre in a_ejecutar:
+                if "key_col" not in inspect.signature(grafo.jobs[nombre].modulo.run).parameters:
+                    raise ConfigError(f"el job {nombre!r} no admite --key-col")
 
         if args.dry_run:
-            problemas = revisar(grafo, config, a_ejecutar, args.input)
+            problemas = revisar(grafo, config, a_ejecutar, args.input, args.output)
             print(render_plan(grafo, config, a_ejecutar, problemas, args.input, args.output))
             return EXIT_DRY_RUN if problemas else EXIT_OK
+
+        solapes = revisar_solapes(grafo, config, a_ejecutar, args.input, args.output)
+        if solapes:
+            raise ConfigError("; ".join(f"[{p.donde}] {p.mensaje}" for p in solapes))
 
         logger.info("ETL iniciada: jobs=%s", ", ".join(a_ejecutar))
         # Antes de la sesion: no tiene sentido arrancar Spark para descubrir que
@@ -169,6 +177,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_BACKEND
     except ConfigError as exc:
         logger.error("Configuracion invalida: %s", exc)
+        return EXIT_CONFIG
+    except GrafoError as exc:
+        # El grafo se construye antes de poder revisar el plan, asi que un ciclo
+        # o un job mal declarado llega aqui y no a `revisar`. En el dry-run se
+        # cuenta como lo que es, un problema del plan.
+        if args.dry_run:
+            print(f"1 problema(s):\n  [grafo] {exc}")
+            return EXIT_DRY_RUN
+        logger.error("El grafo de jobs no es valido: %s", exc)
         return EXIT_CONFIG
     except FileNotFoundError as exc:
         logger.error("Entrada no encontrada: %s", exc)

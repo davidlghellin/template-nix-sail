@@ -28,11 +28,11 @@ def test_descubre_los_jobs_del_paquete():
     assert {"ciudades", "por_ccaa"} <= set(grafo.jobs)
 
 
-def test_todo_job_declara_consume_y_produce():
-    # Un job sin declarar queda invisible en el grafo, que es peor que no estar.
+def test_todo_job_produce_algo():
+    # Que declare CONSUME y PRODUCE ya lo exige `load_job`. `CONSUME = ()` es
+    # valido para un job de origen; uno que no produce nada no aporta a la cadena.
     for nombre, job in discover_jobs().jobs.items():
-        assert job.produce, f"{nombre} no declara PRODUCE"
-        assert job.consume, f"{nombre} no declara CONSUME"
+        assert job.produce, f"{nombre} no produce ningun dataset"
 
 
 def test_ningun_dataset_lo_producen_dos_jobs():
@@ -141,8 +141,16 @@ def test_orden_incluye_todos_los_jobs():
 
 
 def test_orden_es_estable():
-    # Mismo grafo, mismo orden: la salida no puede bailar entre ejecuciones.
-    assert discover_jobs().orden == discover_jobs().orden
+    # A igualdad de dependencias, por nombre. Los jobs se insertan al reves para
+    # que el test no pase por el orden en que se descubren.
+    from etl_kedro.graph import Grafo, Job
+
+    def job_suelto(nombre):
+        return Job(nombre=nombre, modulo=None, consume=(), produce=())  # type: ignore[arg-type]
+
+    grafo = Grafo(jobs={"b": job_suelto("b"), "a": job_suelto("a")})
+
+    assert grafo.orden == ["a", "b"]
 
 
 def test_orden_detecta_ciclos():

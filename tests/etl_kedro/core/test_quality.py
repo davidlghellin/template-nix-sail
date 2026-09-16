@@ -184,3 +184,35 @@ def test_deduplicate_no_pisa_columnas_que_se_llamen_como_las_auxiliares(spark):
     assert filas["a"]["__etl_row_id__"] == "dato-1"
     assert filas["a"]["__etl_row_number__"] == "otro-1"
     assert filas["b"]["__etl_row_id__"] == "dato-3"
+
+
+def test_deduplicate_con_order_col_elige_de_forma_determinista(spark):
+    # Sin columna de orden, cual de los duplicados queda depende de como numere
+    # el motor las particiones. Con ella, no.
+    df = spark.createDataFrame(
+        [("madrid", 3, "c"), ("madrid", 1, "a"), ("madrid", 2, "b")],
+        ["ciudad", "llegada", "dato"],
+    )
+
+    primera = deduplicate_by_key(df, "ciudad", "first", order_col="llegada").collect()
+    ultima = deduplicate_by_key(df, "ciudad", "last", order_col="llegada").collect()
+
+    assert primera[0]["dato"] == "a"
+    assert ultima[0]["dato"] == "c"
+
+
+def test_deduplicate_falla_si_no_existe_la_columna_de_orden(df_ok):
+    with pytest.raises(QualityCheckError, match="no_existe"):
+        deduplicate_by_key(df_ok, "id", order_col="no_existe")
+
+
+@pytest.mark.parametrize(("keep", "esperado"), [("first", "cinco"), ("last", "siete")])
+def test_deduplicate_con_order_col_ignora_los_nulos(spark, keep, esperado):
+    df = spark.createDataFrame(
+        [("x", None, "nulo"), ("x", 5, "cinco"), ("x", 7, "siete")],
+        "clave string, orden int, dato string",
+    )
+
+    fila = deduplicate_by_key(df, "clave", keep, order_col="orden").collect()[0]
+
+    assert fila["dato"] == esperado

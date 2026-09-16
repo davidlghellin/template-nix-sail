@@ -11,6 +11,7 @@ las rutas escritas a pelo. En `pre` y `pro` no hay valor por defecto a proposito
 mas vale fallar al arrancar que escribir en el sitio equivocado.
 """
 
+import ntpath
 import os
 from dataclasses import dataclass
 
@@ -66,12 +67,22 @@ class Config:
                 )
             raiz = RAIZ_EN_DEV
 
-        formato = os.environ.get(VAR_FORMATO)
+        # Vacia cuenta como no configurada, igual que la raiz.
+        formato = (os.environ.get(VAR_FORMATO) or "").strip() or None
         if formato is not None and formato not in FORMATOS:
             raise ConfigError(
                 f"{VAR_FORMATO} invalido: {formato!r}. Validos: {', '.join(FORMATOS)}"
             )
-        return cls(entorno=entorno, raiz=raiz, formato_salida=formato)
+        forzados: frozenset[str] = frozenset()
+        if formato is not None:
+            # A que datasets alcanza: los que produce algun job. Se calcula aqui
+            # y no en la CLI, para que la variable valga igual al lanzar un job
+            # desde codigo o un notebook. Import local: el grafo importa los
+            # jobs, y estos importan esta configuracion.
+            from etl_kedro.graph import discover_jobs
+
+            forzados = frozenset(discover_jobs().productor_de)
+        return cls(entorno=entorno, raiz=raiz, formato_salida=formato, datasets_forzados=forzados)
 
     def formato_de(self, nombre: str, formato_declarado: str) -> str:
         """Formato efectivo de un dataset: el forzado por el entorno, o el suyo.
@@ -90,7 +101,16 @@ class Config:
         Una ruta que ya es absoluta o un URI (`s3://...`) se deja intacta: es su
         forma de escapar de la raiz. El resto cuelga de ella.
         """
-        if "://" in ruta or ruta.startswith("/"):
+        # `ntpath` ademas de `os.path`: una ruta `C:\datos` o `\\servidor\x`
+        # es absoluta aunque el catalogo se lea en Linux, y no debe colgar de la
+        # raiz. La barra inicial se mira aparte porque desde Python 3.13
+        # `ntpath.isabs("/datos")` es False, y en Windows `os.path` es `ntpath`.
+        if (
+            "://" in ruta
+            or ruta.startswith(("/", "\\"))
+            or os.path.isabs(ruta)
+            or ntpath.isabs(ruta)
+        ):
             return ruta
         if self.raiz.strip("/") == "" and self.raiz.startswith("/"):
             # La raiz del sistema de ficheros. Sin este caso, quitar la barra

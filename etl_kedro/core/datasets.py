@@ -14,6 +14,7 @@ da los consumidores de un dataset al instante, tengas 3 jobs o 300.
 """
 
 import csv
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,6 +65,40 @@ def se_comprueba_en_local(path: str) -> bool:
     return URI_SEPARATOR not in path and not any(char in path for char in GLOB_CHARS)
 
 
+def formato_efectivo(dataset: Dataset, config: Config | None, sobrescrita: bool) -> str:
+    """Formato con el que se lee o escribe `dataset` en esta ejecucion.
+
+    `ETL_OUTPUT_FORMAT` cambia el formato de los datasets **en su ruta del
+    catalogo**, que es donde otro job de la cadena los dejo en ese formato. Una
+    ruta dada a mano (`--input`/`--output`) es un fichero concreto que no ha
+    escrito la cadena, y se trata con el formato declarado: forzarlo leeria un
+    CSV como parquet.
+    """
+    if sobrescrita:
+        return dataset.formato
+    return (config or Config()).formato_de(dataset.nombre, dataset.formato)
+
+
+def rutas_solapadas(a: str, b: str) -> bool:
+    """True si `a` y `b` son la misma ruta o una esta dentro de la otra."""
+
+    def normalizar(ruta: str) -> str:
+        # Todo lo local se hace absoluto, comodines incluidos (`realpath` deja
+        # el `*` tal cual). Si no, `data/in/*.csv` relativo nunca se compararia
+        # con un `--output data/in` ya resuelto, y el solape pasaria sin verse.
+        if URI_SEPARATOR in ruta:
+            return ruta.rstrip("/")
+        return os.path.realpath(os.path.expanduser(ruta))
+
+    x, y = normalizar(a), normalizar(b)
+    separadores = ("/", os.sep)
+    return (
+        x == y
+        or any(x.startswith(y + sep) for sep in separadores)
+        or any(y.startswith(x + sep) for sep in separadores)
+    )
+
+
 def check_input_exists(path: str) -> None:
     """Comprueba que la entrada existe antes de arrancar Spark.
 
@@ -99,7 +134,15 @@ def cabecera_csv(ruta: str) -> list[str] | None:
         fichero = partes[0]
     if not fichero.is_file():
         return None
-    with fichero.open(newline="", encoding="utf-8") as handle:
+    # `utf-8-sig` y no `utf-8`: un CSV exportado desde Excel empieza con BOM, y
+    # la primera columna llegaria como '\ufeffciudad'. Los dos motores lo quitan
+    # al leer, asi que la comprobacion tiene que hacer lo mismo.
+    #
+    # `errors="replace"` porque Python decodifica un bloque entero y no solo la
+    # primera linea: un fichero en Latin-1 con una "n" en la segunda fila
+    # reventaria aqui con traceback, aunque el motor lo lee. Una cabecera que
+    # no cuadre se sigue detectando al comparar.
+    with fichero.open(newline="", encoding="utf-8-sig", errors="replace") as handle:
         return next(csv.reader(handle), [])
 
 

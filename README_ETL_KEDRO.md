@@ -151,11 +151,14 @@ Plan (entorno=pro, raiz=s3://mi-bucket/oro)
 Sin problemas: esquemas coherentes y entradas presentes.
 ```
 
-Comprueba que no haya ciclos, que nadie declare el mismo dataset con dos rutas o
-dos esquemas, que existan las entradas de lo que se va a lanzar (con `--job`,
-las de ese job y en la ruta de `--input` si se pasa) y que la cabecera real del
-CSV traiga exactamente las columnas del `StructType` declarado, ni una mas. La cabecera se lee con el `csv`
-de Python, sin motor. Si algo falla lo lista y sale con codigo 6:
+Comprueba que el grafo se pueda construir (sin ciclos, sin un dataset con dos
+productores, sin jobs que olviden `CONSUME`/`PRODUCE`), que nadie declare el
+mismo dataset con dos rutas, dos esquemas o dos formatos, que ningun job escriba
+donde lee, que existan las entradas de lo que se va a lanzar (con `--job`, las
+de ese job y en la ruta de `--input` si se pasa) y que la cabecera real del CSV
+traiga exactamente las columnas del `StructType` declarado, ni una mas. La
+cabecera se lee con el `csv` de Python, sin motor. Si algo falla lo lista y sale
+con codigo 6:
 
 ```
 1 problema(s):
@@ -169,12 +172,14 @@ Los `s3://` no se miran en seco: se dejan pasar en vez de dar un falso error.
 
 ### Entornos y rutas
 
-La configuracion son dos variables de entorno, no ficheros:
+La configuracion son variables de entorno, no ficheros. Una variable definida
+pero vacia cuenta como no definida:
 
-| Variable         | Por defecto | Descripcion                                            |
-| ---------------- | ----------- | ------------------------------------------------------ |
-| `ETL_ENV`        | `dev`       | `dev`, `pre` o `pro`                                   |
-| `ETL_DATA_ROOT`  | `.` en dev  | Raiz de la que cuelgan las rutas relativas             |
+| Variable            | Por defecto | Descripcion                                                  |
+| ------------------- | ----------- | ------------------------------------------------------------ |
+| `ETL_ENV`           | `dev`       | `dev`, `pre` o `pro`                                         |
+| `ETL_DATA_ROOT`     | `.` en dev  | Raiz de la que cuelgan las rutas relativas                   |
+| `ETL_OUTPUT_FORMAT` | el de cada dataset | `csv` o `parquet`, para los datasets que produce la cadena |
 
 Los datasets declaran ruta **relativa** y `Config.resolver` le antepone la raiz,
 asi que el mismo codigo escribe en local o en el bucket sin tocar nada:
@@ -195,6 +200,11 @@ etl-kedro --all
 etl-kedro --job por_ccaa
 ```
 
+Las rutas del catalogo son relativas a `ETL_DATA_ROOT`, que en `dev` es el
+directorio actual, y el CSV de ejemplo vive en `resources/` del repo, no dentro
+del paquete. Asi que el comando se lanza desde la raiz del repo, o con
+`ETL_DATA_ROOT` apuntando a ella.
+
 ### Argumentos
 
 | Argumento     | Por defecto | Descripcion                                                  |
@@ -204,8 +214,8 @@ etl-kedro --job por_ccaa
 | `--job`       | `ciudades`  | Job a ejecutar; los nombres salen de las carpetas de `jobs/`   |
 | `--input`     | del dataset | Sobrescribe la ruta de entrada; incompatible con `--all`       |
 | `--output`    | del dataset | Sobrescribe la ruta de salida; incompatible con `--all`        |
-| `--mode`      | `overwrite` | `overwrite` o `append`                                         |
-| `--key-col`   | del job     | Columna clave: sin nulos y usada para deduplicar. No con `--all` |
+| `--mode`      | `overwrite` | `overwrite` o `append`. `append` no con `--all`                |
+| `--key-col`   | del job     | Clave de `ciudades`: sin nulos y usada para deduplicar. No con `--all` ni en `por_ccaa`, cuya clave es su salida |
 | `--log-level` | `INFO`      | `DEBUG`, `INFO`, `WARNING` o `ERROR`                           |
 
 ### Logs y datos van por canales distintos
@@ -254,8 +264,8 @@ Codigos de salida:
 | `1`    | Error inesperado (se loguea con traceback)                     |
 | `2`    | Fallo de un check de calidad (`QualityCheckError`)             |
 | `3`    | Backend invalido o sin Java (`BackendError`)                   |
-| `4`    | La ruta de `--input` no existe (`FileNotFoundError`)           |
-| `5`    | Configuracion de entorno invalida (`ConfigError`)              |
+| `4`    | No existe una entrada, de `--input` o del catalogo             |
+| `5`    | Configuracion invalida: entorno, grafo de jobs, o un job que escribiria donde lee |
 | `6`    | El `--dry-run` ha encontrado problemas                         |
 
 Los fallos de dato y de entorno salen como una linea de `ERROR` con el motivo,
@@ -321,9 +331,12 @@ Lo del orden no es teorico: un esquema explicito se aplica **por posicion**. Con
 esa opcion** y devolveria las columnas cruzadas sin un solo error. Por eso la
 comprobacion se hace aqui, y no se delega en el motor.
 
-Al escribir manda el `formato` del dataset. `ETL_OUTPUT_FORMAT` lo sobrescribe
-para toda la cadena, que es como el test e2e obtiene parquet de unos jobs que
-normalmente escriben CSV.
+Al escribir manda el `formato` del dataset. `ETL_OUTPUT_FORMAT` lo sobrescribe,
+al leer y al escribir, para los datasets que produce algun job de la cadena y en
+su ruta del catalogo: es como el test e2e obtiene parquet de unos jobs que
+normalmente escriben CSV. No toca las entradas externas, que las escribio otro,
+ni una ruta pasada con `--input`/`--output`, que se trata con su formato
+declarado.
 
 ### Checks de calidad
 
@@ -334,8 +347,10 @@ se pueden encadenar y usar directamente dentro de `transform`:
   lista de columnas que faltan.
 - `check_non_null_key(df, key_col)` — lanza `QualityCheckError` indicando cuantos
   nulos hay en la clave.
-- `deduplicate_by_key(df, key_col, keep="first")` — deja una fila por clave;
-  `keep` admite `"first"` o `"last"`.
+- `deduplicate_by_key(df, key_col, keep="first", order_col=None)` — deja una
+  fila por clave; `keep` admite `"first"` o `"last"`. Si importa cual de los
+  duplicados se queda, pasa `order_col`: sin ella el orden es el de
+  `monotonically_increasing_id`, que en Sail no sigue el del fichero.
 
 ## Tests
 

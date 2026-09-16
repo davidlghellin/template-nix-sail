@@ -153,3 +153,23 @@ def test_check_java_available_java_sin_permiso_de_ejecucion(monkeypatch, tmp_pat
 
     with pytest.raises(BackendError, match="ejecutable"):
         check_java_available()
+
+
+def test_en_windows_el_binario_de_java_es_java_exe():
+    from etl_kedro.core.session import ejecutable_java
+
+    assert ejecutable_java("nt") == "java.exe"
+    assert ejecutable_java("posix") == "java"
+
+
+def test_check_java_available_busca_el_binario_que_toca_en_el_sistema(monkeypatch, tmp_path):
+    # No basta con probar el helper: la comprobacion tiene que buscar ese nombre.
+    # Si volviera a buscar "java" a pelo, en Windows rechazaria un JDK valido.
+    java = tmp_path / "bin" / "java.exe"
+    java.parent.mkdir()
+    java.touch()
+    java.chmod(0o755)
+    monkeypatch.setenv("JAVA_HOME", str(tmp_path))
+    monkeypatch.setattr("etl_kedro.core.session.ejecutable_java", lambda *_: "java.exe")
+
+    check_java_available()  # no lanza: ha buscado java.exe

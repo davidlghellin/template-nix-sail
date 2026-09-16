@@ -10,12 +10,9 @@ import pytest
 from pyspark.sql import SparkSession
 
 from etl_kedro.core.config import Config
-from etl_kedro.jobs.ciudades import job as ciudades_job
-from etl_kedro.jobs.ciudades.datasets import CIUDADES_DEDUP, CIUDADES_RAW
-from etl_kedro.jobs.por_ccaa import job as por_ccaa_job
-from etl_kedro.jobs.por_ccaa.datasets import POBLACION_POR_CCAA
 from etl_kedro.main import (
     EXIT_BACKEND,
+    EXIT_CONFIG,
     EXIT_DRY_RUN,
     EXIT_INPUT,
     EXIT_OK,
@@ -133,14 +130,8 @@ def test_main_happy_path_devuelve_exit_ok(cli, csv_con_duplicados, tmp_path):
     assert len(leer_csv_escrito(salida)) == 2
 
 
-def test_main_lanza_la_cadena_entera(cli, monkeypatch, tmp_path, escribir_ciudades):
-    """`--all` encadena los jobs: el segundo lee lo que escribio el primero.
-
-    Los datasets se reapuntan a `tmp_path` con rutas absolutas en vez de hacer
-    `chdir`: PySpark resuelve las rutas relativas contra el directorio de la
-    JVM, que se fija al arrancarla, asi que un `chdir` posterior no le afecta
-    (Sail, en proceso, si lo respeta). Con rutas absolutas da igual el motor.
-    """
+def test_main_lanza_la_cadena_entera(cli, reapuntar_cadena, escribir_ciudades):
+    """`--all` encadena los jobs: el segundo lee lo que escribio el primero."""
     entrada = escribir_ciudades(
         [
             ("madrid", 3000000, "Madrid", "Comunidad de Madrid", 604.3),
@@ -148,15 +139,7 @@ def test_main_lanza_la_cadena_entera(cli, monkeypatch, tmp_path, escribir_ciudad
             ("barcelona", 1600000, "Barcelona", "Cataluna", 101.4),
         ]
     )
-    dedup = tmp_path / "dedup"
-    final = tmp_path / "por_ccaa"
-
-    monkeypatch.setattr(ciudades_job, "CIUDADES_RAW", replace(CIUDADES_RAW, ruta=str(entrada)))
-    monkeypatch.setattr(ciudades_job, "CIUDADES_DEDUP", replace(CIUDADES_DEDUP, ruta=str(dedup)))
-    monkeypatch.setattr(por_ccaa_job, "CIUDADES_DEDUP", replace(CIUDADES_DEDUP, ruta=str(dedup)))
-    monkeypatch.setattr(
-        por_ccaa_job, "POBLACION_POR_CCAA", replace(POBLACION_POR_CCAA, ruta=str(final))
-    )
+    _, final = reapuntar_cadena(entrada)
 
     codigo = main(["--all"])
 
@@ -278,3 +261,49 @@ def test_main_dry_run_de_un_job_revisa_la_ruta_de_input(tmp_path, capsys):
     salida = capsys.readouterr().out
     assert codigo == EXIT_DRY_RUN
     assert "no-existe.csv" in salida
+
+
+def test_parse_args_all_no_admite_append():
+    # Append en la cadena acumula los intermedios y el agregado los suma de nuevo.
+    with pytest.raises(SystemExit):
+        parse_args(["--all", "--mode", "append"])
+
+
+def test_main_no_escribe_encima_de_su_entrada(tmp_path, monkeypatch, escribir_ciudades):
+    """Misma ruta de entrada y salida: se rechaza antes de tocar nada.
+
+    Sin esto, en Sail la entrada se borraba antes de leerla y en PySpark se
+    sustituia en silencio por la salida.
+    """
+    entrada = escribir_ciudades([("madrid", 1, "Madrid", "Comunidad de Madrid", 1.0)])
+    directorio = os.path.dirname(entrada)
+    monkeypatch.setattr(
+        "etl_kedro.main.spark_session",
+        lambda *_: pytest.fail("no deberia arrancar Spark"),
+    )
+
+    codigo = main(["--input", directorio, "--output", directorio])
+
+    assert codigo == EXIT_CONFIG
+    assert os.path.exists(entrada)
+
+
+@pytest.fixture
+def grafo_con_ciclo(monkeypatch):
+    from etl_kedro.graph import discover_jobs
+
+    grafo = discover_jobs()
+    ciudades, por_ccaa = grafo.jobs["ciudades"], grafo.jobs["por_ccaa"]
+    grafo.jobs["ciudades"] = replace(ciudades, consume=por_ccaa.produce)
+    monkeypatch.setattr("etl_kedro.main.discover_jobs", lambda: grafo)
+
+
+def test_main_dry_run_informa_de_un_ciclo_en_vez_de_romper(grafo_con_ciclo, capsys):
+    codigo = main(["--all", "--dry-run"])
+
+    assert codigo == EXIT_DRY_RUN
+    assert "ciclo" in capsys.readouterr().out
+
+
+def test_main_un_grafo_invalido_es_error_de_configuracion(grafo_con_ciclo):
+    assert main(["--all"]) == EXIT_CONFIG

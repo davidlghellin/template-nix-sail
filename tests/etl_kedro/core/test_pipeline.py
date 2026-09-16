@@ -314,3 +314,43 @@ def test_write_dataset_rechaza_una_columna_con_otro_tipo(pipeline, tmp_path):
         pipeline.write_dataset(Dataset("salida", str(salida), esquema))
 
     assert not salida.exists()
+
+
+def test_write_dataset_deja_el_directorio_aunque_no_haya_filas(pipeline, tmp_path):
+    # Sail no escribe nada para un DataFrame vacio; el siguiente job diria que
+    # no existe su entrada, donde en PySpark leeria cero filas.
+    esquema = StructType([StructField("id", StringType()), StructField("ciudad", StringType())])
+    salida = tmp_path / "vacia"
+    pipeline._df = pipeline.spark.createDataFrame([], esquema)
+
+    pipeline.write_dataset(Dataset("salida", str(salida), esquema))
+
+    assert salida.is_dir()
+
+
+def test_una_ruta_dada_a_mano_se_lee_con_su_formato_declarado(pipeline, tmp_path):
+    # ETL_OUTPUT_FORMAT cambia el formato en la ruta del catalogo, no el de un
+    # CSV que se pasa con --input.
+    path = tmp_path / "in.csv"
+    path.write_text("id,ciudad\n1,madrid\n", encoding="utf-8")
+    esquema = StructType([StructField("id", StringType()), StructField("ciudad", StringType())])
+    dataset = Dataset("entrada", "data/entrada", esquema)
+    forzado = Config(formato_salida="parquet", datasets_forzados=frozenset({"entrada"}))
+
+    pipeline.read_dataset(dataset, forzado, path=str(path))
+
+    assert [tuple(r) for r in pipeline.df.collect()] == [("1", "madrid")]
+
+
+def test_read_dataset_parquet_de_un_directorio_vacio_trae_las_columnas(pipeline, tmp_path):
+    # Es lo que deja Sail al escribir un resultado vacio: sin el esquema, el
+    # siguiente job leeria un DataFrame sin columnas.
+    esquema = StructType([StructField("id", StringType()), StructField("ciudad", StringType())])
+    vacio = tmp_path / "vacio"
+    vacio.mkdir()
+    dataset = Dataset("d", str(vacio), esquema, formato="parquet")
+
+    pipeline.read_dataset(dataset)
+
+    assert pipeline.df.columns == ["id", "ciudad"]
+    assert pipeline.count() == 0

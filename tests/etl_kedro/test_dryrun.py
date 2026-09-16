@@ -1,6 +1,7 @@
 """Tests del dry-run: plan, esquemas y entradas, todo sin arrancar Spark."""
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from pyspark.sql.types import StringType, StructField, StructType
@@ -30,9 +31,13 @@ def csv_correcto(tmp_path):
 # --- el proyecto de verdad ---
 
 
+REPO = Path(__file__).resolve().parents[2]
+
+
 def test_el_grafo_real_no_tiene_problemas():
-    # La cadena que hay en el repo tiene que pasar el dry-run en dev.
-    assert revisar(discover_jobs(), Config()) == []
+    # La cadena que hay en el repo tiene que pasar el dry-run. La raiz se fija
+    # al repo para que no dependa de desde donde se lance pytest.
+    assert revisar(discover_jobs(), Config(raiz=str(REPO))) == []
 
 
 def test_el_plan_lista_los_jobs_en_orden():
@@ -271,3 +276,37 @@ def test_una_entrada_con_comodines_no_se_da_por_inexistente(tmp_path):
     grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
 
     assert revisar_entradas(grafo, Config()) == []
+
+
+def test_con_parquet_forzado_no_revisa_una_cabecera_csv(tmp_path):
+    # La ejecucion leera parquet: contrastar una cabecera CSV no dice nada.
+    path = tmp_path / "entrada.csv"
+    path.write_text("otra,cosa\n1,2\n", encoding="utf-8")
+    entrada = Dataset("entrada", str(path), ESQUEMA)
+    grafo = Grafo(jobs={"a": job_falso("a", consume=(entrada,))})
+    config = Config(formato_salida="parquet", datasets_forzados=frozenset({"entrada"}))
+
+    assert revisar_entradas(grafo, Config()) != []  # sin forzar, la cabecera no cuadra
+    assert revisar_entradas(grafo, config) == []
+
+
+def test_detecta_el_mismo_dataset_con_dos_formatos():
+    csv = Dataset("c", "data/c", ESQUEMA)
+    parquet = replace(csv, formato="parquet")
+    grafo = Grafo(
+        jobs={"a": job_falso("a", produce=(parquet,)), "b": job_falso("b", consume=(csv,))}
+    )
+
+    problemas = revisar_esquemas(grafo)
+
+    assert len(problemas) == 1
+    assert "formatos distintos" in problemas[0].mensaje
+
+
+def test_detecta_un_job_que_escribe_donde_lee(tmp_path):
+    grafo = discover_jobs()
+    directorio = str(tmp_path)
+
+    problemas = revisar(grafo, Config(raiz=str(REPO)), ["ciudades"], directorio, directorio)
+
+    assert any("la entrada se perderia" in p.mensaje for p in problemas)

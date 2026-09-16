@@ -69,3 +69,50 @@ def test_problema_de_cabecera_rechaza_columnas_sobrantes():
 
     assert problema is not None
     assert "extra" in problema
+
+
+def test_cabecera_csv_ignora_el_bom(tmp_path):
+    # Un CSV exportado desde Excel empieza con BOM; los dos motores lo quitan.
+    from etl_kedro.core.datasets import cabecera_csv
+
+    path = tmp_path / "bom.csv"
+    path.write_bytes("\ufeffciudad,habitantes\nmadrid,1\n".encode())
+
+    assert cabecera_csv(str(path)) == ["ciudad", "habitantes"]
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "solapan"),
+    [
+        ("/d/x", "/d/x", True),
+        ("/d/x/in.csv", "/d/x", True),
+        ("/d/x", "/d/x/sub", True),
+        ("/d/x", "/d/xy", False),
+        ("s3://b/raw", "s3://b/raw/", True),
+        ("s3://b/raw", "s3://b/out", False),
+    ],
+)
+def test_rutas_solapadas(a, b, solapan):
+    from etl_kedro.core.datasets import rutas_solapadas
+
+    assert rutas_solapadas(a, b) is solapan
+
+
+def test_rutas_solapadas_con_un_comodin_relativo(tmp_path, monkeypatch):
+    # Relativo contra absoluto: antes no se normalizaba el del comodin.
+    from etl_kedro.core.datasets import rutas_solapadas
+
+    monkeypatch.chdir(tmp_path)
+
+    assert rutas_solapadas("data/in/*.csv", str(tmp_path / "data" / "in"))
+
+
+def test_cabecera_csv_de_un_fichero_que_no_es_utf8(tmp_path):
+    # Latin-1 con una "n" en los datos: el motor lo lee, la comprobacion no
+    # puede reventar con traceback.
+    from etl_kedro.core.datasets import cabecera_csv
+
+    path = tmp_path / "latin1.csv"
+    path.write_bytes("ciudad,comunidad\nlleida,Catalu\xf1a\n".encode("latin-1"))
+
+    assert cabecera_csv(str(path)) == ["ciudad", "comunidad"]

@@ -18,10 +18,12 @@ from etl_kedro.core.config import Config
 from etl_kedro.core.datasets import (
     Dataset,
     cabecera_csv,
+    formato_efectivo,
     problema_de_cabecera,
+    rutas_solapadas,
     se_comprueba_en_local,
 )
-from etl_kedro.graph import CicloEnElGrafoError, Grafo, ProductorDuplicadoError
+from etl_kedro.graph import Grafo, GrafoError
 
 
 @dataclass(frozen=True)
@@ -55,10 +57,16 @@ def revisar_esquemas(grafo: Grafo) -> list[Problema]:
     for nombre, declaraciones in sorted(_declaraciones(grafo).items()):
         esquemas = {id(d.esquema) for _, d in declaraciones}
         rutas = {d.ruta for _, d in declaraciones}
+        formatos = {d.formato for _, d in declaraciones}
         jobs = ", ".join(sorted({job for job, _ in declaraciones}))
         if len(rutas) > 1:
             problemas.append(
                 Problema(nombre, f"declarado con rutas distintas en {jobs}: {sorted(rutas)}")
+            )
+        elif len(formatos) > 1:
+            # Uno escribiria parquet y el otro lo leeria como CSV.
+            problemas.append(
+                Problema(nombre, f"declarado con formatos distintos en {jobs}: {sorted(formatos)}")
             )
         elif len(esquemas) > 1:
             problemas.append(
@@ -113,19 +121,24 @@ def revisar_entradas(
         if not Path(ruta).exists():
             problemas.append(Problema(nombre, f"no existe la entrada: {ruta}"))
             continue
-        problemas.extend(_revisar_cabecera(nombre, dataset, ruta))
+        formato = formato_efectivo(dataset, config, sobrescrita=input_path is not None)
+        problemas.extend(_revisar_cabecera(nombre, dataset, ruta, formato))
     return problemas
 
 
-def _revisar_cabecera(nombre: str, dataset: Dataset, ruta: str) -> list[Problema]:
+def _revisar_cabecera(nombre: str, dataset: Dataset, ruta: str, formato: str) -> list[Problema]:
     """Compara la cabecera del CSV con las columnas del esquema declarado.
 
     Es la misma comprobacion que hace `ETLPipeline.read_dataset` al leer: aqui
     se lista como problema del plan y alli corta la ejecucion. Una sola
     implementacion, para que el dry-run no pueda dar por bueno lo que luego
     falla al ejecutar.
+
+    `formato` es el que usara la ejecucion, no el declarado: con
+    `ETL_OUTPUT_FORMAT=parquet` los datasets de la cadena se leen como parquet,
+    que no tiene cabecera que contrastar.
     """
-    if dataset.esquema is None or dataset.formato != "csv":
+    if dataset.esquema is None or formato != "csv":
         return []
     cabecera = cabecera_csv(ruta)
     if cabecera is None:
@@ -134,11 +147,44 @@ def _revisar_cabecera(nombre: str, dataset: Dataset, ruta: str) -> list[Problema
     return [Problema(nombre, problema)] if problema else []
 
 
+def revisar_solapes(
+    grafo: Grafo,
+    config: Config,
+    jobs: list[str] | None = None,
+    input_path: str | None = None,
+    output_path: str | None = None,
+) -> list[Problema]:
+    """Ningun job puede escribir donde lee.
+
+    Spark lee en diferido: con `overwrite` la escritura vacia el destino antes
+    de que se lea el origen. Si coinciden, o uno esta dentro del otro, en Sail
+    la ejecucion falla con la entrada ya borrada y en PySpark la sustituye en
+    silencio por la salida. Con `append` tampoco vale: se leeria a si misma.
+    """
+    problemas = []
+    for nombre in list(grafo.jobs) if jobs is None else jobs:
+        job = grafo.jobs[nombre]
+        for salida in job.produce:
+            destino = output_path or salida.resolver(config)
+            for entrada in job.consume:
+                origen = input_path or entrada.resolver(config)
+                if rutas_solapadas(origen, destino):
+                    problemas.append(
+                        Problema(
+                            nombre,
+                            f"escribe {destino} encima de lo que lee ({origen}): "
+                            "la entrada se perderia",
+                        )
+                    )
+    return problemas
+
+
 def revisar(
     grafo: Grafo,
     config: Config,
     jobs: list[str] | None = None,
     input_path: str | None = None,
+    output_path: str | None = None,
 ) -> list[Problema]:
     """Todas las comprobaciones en seco.
 
@@ -149,10 +195,11 @@ def revisar(
     problemas: list[Problema] = []
     try:
         grafo.orden
-    except (CicloEnElGrafoError, ProductorDuplicadoError) as exc:
+    except GrafoError as exc:
         problemas.append(Problema("grafo", str(exc)))
         return problemas  # sin orden no tiene sentido seguir
     problemas.extend(revisar_esquemas(grafo))
+    problemas.extend(revisar_solapes(grafo, config, jobs, input_path, output_path))
     problemas.extend(revisar_entradas(grafo, config, jobs, input_path))
     return problemas
 
