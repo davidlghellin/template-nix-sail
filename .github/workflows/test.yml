@@ -15,6 +15,9 @@ jobs:
   # que reutilizan los tests. Los tres jobs abren el mismo `nix develop`, y
   # SPARK_BACKEND solo decide contra que motor corren, no que se instala: el
   # venv es identico y basta una clave de cache para todos.
+  # La clave incluye flake.nix y flake.lock: el venv apunta al Python que elige
+  # el flake, y si cambia hay que guardar uno nuevo en vez de reconstruirlo en
+  # cada ejecucion.
   checks:
     runs-on: ubuntu-latest
     name: lint + typecheck
@@ -27,7 +30,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .venv-nix
-          key: venv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'flake.lock') }}
+          key: venv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'flake.nix', 'flake.lock') }}
       - run: nix develop --command ruff check .
       - run: nix develop --command ruff format --check .
       - run: nix develop --command mypy etl_kedro tests
@@ -51,7 +54,7 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: .venv-nix
-          key: venv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'flake.lock') }}
+          key: venv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'flake.nix', 'flake.lock') }}
       - run: nix develop --command pytest -v
         env:
           SPARK_BACKEND: ${{ matrix.backend }}
