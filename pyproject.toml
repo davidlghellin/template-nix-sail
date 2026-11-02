@@ -31,10 +31,10 @@ etl-kedro = "etl_kedro.main:main"
 
 [project.optional-dependencies]
 dev = [
-    "pytest==9.1.1",
+    "pytest==9.2.0",
     "pytest-cov>=6.0",
     "mypy>=1.14",
-    "ruff==0.16.9",
+    "ruff==0.17.3",
     "hatch>=1.14",
     "build>=1.0",
 ]
